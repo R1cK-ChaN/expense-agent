@@ -101,7 +101,7 @@ Owns:
 - Appending validated transaction rows.
 - Updating exactly one resolved transaction row.
 - Looking up transactions for idempotency, update resolution, and queries.
-- Mapping domain objects to stable sheet columns.
+- Mapping domain objects to the stable `Transactions` sheet contract in `integrations/google_sheets/schema.py`.
 
 Does not own:
 
@@ -150,6 +150,8 @@ Required configuration:
 - Default currency.
 
 Secrets must come from environment variables or a secret manager. They must not be committed to the repository.
+
+The Google Sheet must contain a worksheet named `Transactions` with the required header row described in `docs/google-sheets-template.md`.
 
 ## Testable Contracts
 

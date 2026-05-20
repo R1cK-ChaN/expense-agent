@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from integrations.google_sheets.schema import TRANSACTIONS_SHEET_NAME
+
 
 REQUIRED_SECRET_ENV_VARS = (
     "TELEGRAM_BOT_TOKEN",
@@ -45,7 +47,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         default_currency=values.get("DEFAULT_CURRENCY", "SGD"),
         parser_model=_optional_value(values, "PARSER_MODEL"),
         google_sheet_id=_optional_value(values, "GOOGLE_SHEET_ID"),
-        google_worksheet_name=values.get("GOOGLE_WORKSHEET_NAME", "transactions"),
+        google_worksheet_name=values.get(
+            "GOOGLE_WORKSHEET_NAME",
+            TRANSACTIONS_SHEET_NAME,
+        ),
         telegram_bot_token=_optional_value(values, "TELEGRAM_BOT_TOKEN"),
         parser_api_key=_optional_value(values, "PARSER_API_KEY"),
         google_service_account_json=_optional_value(
