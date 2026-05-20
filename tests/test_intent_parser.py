@@ -196,7 +196,7 @@ def test_parser_returns_controlled_failure_for_malformed_llm_output(response):
     assert result.error == "malformed_llm_output"
 
 
-def test_parser_rejects_categories_outside_supported_set():
+def test_parser_preserves_unsupported_create_category_for_validator():
     parser = IntentParser(
         llm_client=FakeLLMClient(
             {
@@ -221,8 +221,9 @@ def test_parser_rejects_categories_outside_supported_set():
     result = parser.parse("午饭 12.5 麦当劳", context=make_context())
 
     assert "餐饮" in SUPPORTED_CATEGORIES
-    assert result.is_success is False
-    assert result.error == "malformed_llm_output"
+    assert result.is_success is True
+    assert result.expense is not None
+    assert result.expense.category == "餐厅"
 
 
 def make_context() -> ParserContext:

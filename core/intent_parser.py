@@ -7,22 +7,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Protocol
 
-
-SUPPORTED_CATEGORIES = (
-    "餐饮",
-    "交通",
-    "购物",
-    "住房",
-    "订阅",
-    "娱乐",
-    "医疗",
-    "教育",
-    "办公",
-    "旅行",
-    "未分类",
-)
-
-SUPPORTED_CATEGORY_SET = frozenset(SUPPORTED_CATEGORIES)
+from core.categories import SUPPORTED_CATEGORIES, SUPPORTED_CATEGORY_SET
 
 REQUIRED_TOP_LEVEL_KEYS = frozenset(
     {
@@ -78,6 +63,7 @@ class ParsedExpense:
     merchant: str | None
     payment_method: str | None
     note: str | None
+    type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -250,7 +236,7 @@ def _parse_expense(value: object, intent: ParserIntent) -> ParsedExpense | None:
     if missing_expense_keys:
         raise ValueError("expense is missing required keys.")
 
-    category = _parse_category(value["category"])
+    category = _parse_optional_string(value["category"], "expense.category")
 
     return ParsedExpense(
         date=_parse_optional_string(value["date"], "expense.date"),
@@ -263,6 +249,7 @@ def _parse_expense(value: object, intent: ParserIntent) -> ParsedExpense | None:
             "expense.payment_method",
         ),
         note=_parse_optional_string(value["note"], "expense.note"),
+        type=_parse_optional_string(value.get("type"), "expense.type"),
     )
 
 

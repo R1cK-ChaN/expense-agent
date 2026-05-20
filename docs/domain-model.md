@@ -65,6 +65,17 @@ Invariants:
 - `updated_at` must change when a stored transaction is updated.
 - A Telegram user/message pair can create at most one transaction unless future requirements explicitly support multi-expense messages or multi-chat scoping.
 
+Create-expense validation returns a normalized transaction candidate before any
+repository write is allowed:
+
+- Missing `amount` fails with `这笔支出还缺金额，请补充一下。`.
+- `amount` values of `0` or below fail.
+- Missing `date` defaults to today's date in the configured timezone.
+- Missing `currency` defaults to `SGD` unless runtime configuration supplies a different default.
+- Missing, blank, or unsupported `category` values become `未分类`.
+- Missing `type` defaults to `expense`; any other type fails for the MVP.
+- Messages that appear to contain multiple expense lines fail rather than creating multiple rows.
+
 ## Parser Result
 
 The parser result is a structured description of what the user likely asked for. It is not an execution plan and it never writes to storage.
@@ -174,6 +185,10 @@ Category rules:
 - Unknown but valid expenses use `未分类`.
 - Unsupported category names must either normalize to a supported category or trigger clarification.
 - Stored rows must never contain category synonyms.
+
+The category allowlist is a core domain constant shared by parser and validator
+code. The parser may preserve an unsupported create-expense category string so
+the validator can safely fall back to `未分类`.
 
 ## Storage Row Shape
 

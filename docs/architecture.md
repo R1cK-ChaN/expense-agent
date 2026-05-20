@@ -91,6 +91,27 @@ Does not own:
 - Prompt wording or LLM provider internals.
 - Google Sheets API details.
 
+### Domain Validation
+
+Owns:
+
+- Treating parser output as untrusted input before create-expense writes.
+- Applying configured defaults for date, currency, type, and category.
+- Enforcing positive amount, valid date, ISO-style currency code, expense-only MVP type, and single-record MVP behavior.
+- Returning explicit validation error codes and user-facing messages for correctable failures.
+
+Does not own:
+
+- Prompt wording or LLM provider behavior.
+- Generating repository identifiers or storage timestamps.
+- Sending Telegram replies or appending Google Sheets rows.
+
+The create-expense validator lives in `core/validator.py`. It accepts typed
+parser results plus runtime defaults, returns either a `ValidatedExpense` or a
+validation failure, and never mutates storage. Shared category constants live in
+`core/categories.py` so parser and validator code use the same allowlist without
+making the validator depend on parser prompt details.
+
 ### Parser Port
 
 Owns:
@@ -111,7 +132,9 @@ The parser contract lives in `core/intent_parser.py`. It builds the parser-only
 system prompt, sends raw text plus date/currency defaults to an injectable LLM
 client, and strictly validates the JSON response before returning typed parser
 results. Malformed provider output is converted into a controlled parser failure
-without mutating storage or sending Telegram messages.
+without mutating storage or sending Telegram messages. Create-expense categories
+outside the canonical allowlist are preserved for domain validation, where they
+default to `未分类` instead of being treated as provider-shape failures.
 
 Provider-specific chat completion HTTP code lives in `integrations/llm_client.py`.
 The adapter uses an OpenAI-compatible JSON chat-completions request and exposes
@@ -208,3 +231,7 @@ real credentials.
 The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
 provider failure mapping can be tested without real credentials.
+
+The domain validation contract is covered with unit tests for missing and
+non-positive amounts, timezone-based date defaults, default currency, category
+fallback, expense-only type enforcement, and multiple-expense rejection.
