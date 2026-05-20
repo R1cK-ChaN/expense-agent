@@ -71,12 +71,12 @@ The parser result is a structured description of what the user likely asked for.
 
 Common fields:
 
-- `intent`: one of `create_transaction`, `update_transaction`, `query_transactions`, or `unsupported`.
+- `intent`: one of `create_expense`, `update_recent_expense`, `query_monthly_total`, or `unknown`.
 - `confidence`: number from `0` to `1`.
 - `missing_fields`: fields required before execution can continue.
 - `raw_text`: original message text.
 
-Create transaction fields:
+Create expense fields:
 
 - `amount`
 - `currency`
@@ -87,17 +87,14 @@ Create transaction fields:
 - `merchant`
 - `payment_method`
 
-Update transaction fields:
+Update recent expense fields:
 
-- `target`: reference used to find the transaction, such as `last`, `previous`, date, category, amount, or description.
-- `changes`: map of fields to replace after validation.
+- `update_fields`: map of fields to replace on the user's latest expense after validation.
 
-Query transaction fields:
+Monthly total query fields:
 
-- `date_range`: explicit or inferred start and end dates.
-- `category`
-- `limit`
-- `aggregation`: `total`, `list`, or `by_category`.
+- `month`: explicit or inferred month as `YYYY-MM`.
+- `currency`: currency code for the total, or null when omitted.
 
 Invariants:
 
@@ -160,22 +157,21 @@ Invariants:
 
 The canonical category enum is:
 
-- `food`
-- `groceries`
-- `transport`
-- `housing`
-- `utilities`
-- `shopping`
-- `health`
-- `entertainment`
-- `travel`
-- `education`
-- `work`
-- `other`
+- `餐饮`
+- `交通`
+- `购物`
+- `住房`
+- `订阅`
+- `娱乐`
+- `医疗`
+- `教育`
+- `办公`
+- `旅行`
+- `未分类`
 
 Category rules:
 
-- Unknown but valid expenses use `other`.
+- Unknown but valid expenses use `未分类`.
 - Unsupported category names must either normalize to a supported category or trigger clarification.
 - Stored rows must never contain category synonyms.
 

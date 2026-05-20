@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["app", "config", "integrations", "integrations.google_sheets"]
+packages = ["app", "config", "core", "integrations", "integrations.google_sheets"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
