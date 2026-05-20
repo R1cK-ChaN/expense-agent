@@ -15,8 +15,8 @@ As a user, I can send a natural-language expense message so the bot records it w
 Examples:
 
 - `lunch 12.50`
-- `grab to office 18.20 transport`
-- `yesterday groceries 43.80`
+- `grab to office 18.20 交通`
+- `昨天超市 43.80 购物`
 - `coffee SGD 5.60 with Alex`
 
 Expected behavior:
@@ -43,8 +43,8 @@ As a user, I can correct a recent transaction through Telegram when I notice a m
 Examples:
 
 - `change last lunch to 13.20`
-- `set previous grocery category to groceries`
-- `change yesterday coffee to food`
+- `刚才那笔改成交通`
+- `把昨天咖啡改成餐饮`
 
 Expected behavior:
 
@@ -59,7 +59,7 @@ As a user, I can ask simple questions about previously recorded spending.
 Examples:
 
 - `how much did I spend today?`
-- `food this month`
+- `这个月餐饮花了多少？`
 - `show last 5 expenses`
 
 Expected behavior:
@@ -73,26 +73,26 @@ Expected behavior:
 - Default timezone: configured deployment timezone, initially `Asia/Singapore`.
 - Default currency: configured user currency, initially `SGD`.
 - Default transaction date: the Telegram message date in the configured timezone.
-- Default category: `other` when a valid expense is clear but no supported category is confidently present.
+- Default category: `未分类` when a valid expense is clear but no supported category is confidently present.
 
 ## Supported Categories
 
 The MVP category set is intentionally small and stable so parsing, storage, and reporting stay consistent:
 
-- `food`
-- `groceries`
-- `transport`
-- `housing`
-- `utilities`
-- `shopping`
-- `health`
-- `entertainment`
-- `travel`
-- `education`
-- `work`
-- `other`
+- `餐饮`
+- `交通`
+- `购物`
+- `住房`
+- `订阅`
+- `娱乐`
+- `医疗`
+- `教育`
+- `办公`
+- `旅行`
+- `未分类`
 
-Parser output must normalize synonyms into these values. For example, `mrt`, `taxi`, and `grab` map to `transport`; `doctor` and `medicine` map to `health`.
+Parser output must normalize synonyms into these values. For example, `mrt`,
+`taxi`, and `grab` map to `交通`; `doctor` and `medicine` map to `医疗`.
 
 ## Out of Scope
 

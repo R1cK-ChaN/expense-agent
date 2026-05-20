@@ -28,7 +28,7 @@ The backend is the only component allowed to decide whether data is valid, wheth
 ### Update Transaction
 
 1. Telegram receives an update request.
-2. The parser identifies `update_transaction` intent, target reference, and requested changes.
+2. The parser identifies `update_recent_expense` intent and requested changes.
 3. The application service resolves the target transaction through the repository.
 4. The application service validates that exactly one target exists and every changed field is valid.
 5. The repository updates the existing row and preserves source metadata.
@@ -37,7 +37,7 @@ The backend is the only component allowed to decide whether data is valid, wheth
 ### Query Transactions
 
 1. Telegram receives a query request.
-2. The parser identifies `query_transactions` intent and filters.
+2. The parser identifies `query_monthly_total` intent and month/currency filters.
 3. The application service validates and bounds the query.
 4. The repository reads matching rows from Google Sheets.
 5. The application service formats totals or a compact transaction list.
@@ -106,6 +106,16 @@ Does not own:
 - Deciding that a transaction should be persisted.
 - Performing updates, deletes, or queries.
 - Running background agent loops or invoking arbitrary tools.
+
+The parser contract lives in `core/intent_parser.py`. It builds the parser-only
+system prompt, sends raw text plus date/currency defaults to an injectable LLM
+client, and strictly validates the JSON response before returning typed parser
+results. Malformed provider output is converted into a controlled parser failure
+without mutating storage or sending Telegram messages.
+
+Provider-specific chat completion HTTP code lives in `integrations/llm_client.py`.
+The adapter uses an OpenAI-compatible JSON chat-completions request and exposes
+only the `complete_json` method required by the parser port.
 
 ### Google Sheets Repository
 
@@ -183,6 +193,12 @@ Future implementation should keep these contracts independently testable:
 - Repository contract: transaction append, update, lookup, and query behavior.
 - Telegram adapter contract: Telegram update to metadata and reply call.
 - Application service contract: orchestration across parser, validation, repository, and replies.
+
+The parser contract is covered with fake LLM client tests for create expense,
+update recent expense, monthly total query, unknown messages, missing fields,
+supported categories, and malformed LLM output. The LLM provider adapter is
+covered with an injectable transport so request payloads and provider response
+mapping can be tested without real credentials.
 
 The Telegram webhook contract is covered with FastAPI request tests and a fake
 reply client. The Telegram Bot API client contract is covered with a fake JSON
