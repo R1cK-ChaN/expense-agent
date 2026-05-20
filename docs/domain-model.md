@@ -36,36 +36,34 @@ A transaction is one stored expense row.
 
 Required fields:
 
-- `transaction_id`: backend-generated stable identifier.
-- `telegram_update_id`: source Telegram update identifier.
-- `telegram_message_id`: source Telegram message identifier.
-- `telegram_chat_id`: source Telegram chat identifier.
-- `telegram_user_id`: source Telegram user identifier.
-- `occurred_on`: expense date as `YYYY-MM-DD` in the configured timezone.
-- `description`: short human-readable description.
+- `id`: backend-generated stable identifier.
+- `date`: expense date as `YYYY-MM-DD` in the configured timezone.
 - `amount`: positive decimal amount as provided by the user.
 - `currency`: ISO 4217 currency code.
+- `type`: transaction type, initially `expense`.
 - `category`: one supported normalized category.
+- `telegram_user_id`: source Telegram user identifier.
+- `telegram_message_id`: source Telegram message identifier.
 - `created_at`: backend creation timestamp in ISO 8601 format.
 - `updated_at`: backend update timestamp in ISO 8601 format.
 
 Optional fields:
 
 - `merchant`: merchant or place when confidently available.
-- `notes`: extra user-provided details that do not belong in normalized fields.
-- `parser_confidence`: parser confidence score used for audit and debugging.
+- `payment_method`: card, wallet, cash, or other user-provided payment method when available.
+- `note`: short human-readable description or extra details from the user.
 
 Invariants:
 
 - `amount` must be greater than zero.
 - `currency` must be an uppercase ISO 4217 code.
+- `type` must be `expense` for the MVP.
 - `category` must be one of the supported category values.
-- `occurred_on` must be a valid date.
-- `description` must be non-empty after trimming whitespace.
-- `transaction_id` must not change after creation.
+- `date` must be a valid date.
+- `id` must not change after creation.
 - `created_at` must not change after creation.
 - `updated_at` must change when a stored transaction is updated.
-- A Telegram message can create at most one transaction unless future requirements explicitly support multi-expense messages.
+- A Telegram user/message pair can create at most one transaction unless future requirements explicitly support multi-expense messages or multi-chat scoping.
 
 ## Parser Result
 
@@ -82,11 +80,12 @@ Create transaction fields:
 
 - `amount`
 - `currency`
-- `description`
-- `occurred_on`
+- `note`
+- `date`
+- `type`
 - `category`
 - `merchant`
-- `notes`
+- `payment_method`
 
 Update transaction fields:
 
@@ -121,20 +120,21 @@ Fields:
 
 Supported update fields:
 
-- `occurred_on`
-- `description`
+- `date`
+- `type`
 - `amount`
 - `currency`
 - `category`
 - `merchant`
-- `notes`
+- `payment_method`
+- `note`
 
 Invariants:
 
 - The target must resolve to exactly one transaction before any write occurs.
 - A user can update only transactions associated with the same Telegram user or chat policy defined by the implementation issue.
 - Every changed field must satisfy the same validation rules used for transaction creation.
-- Updates must preserve the original Telegram source metadata and `created_at`.
+- Updates must preserve the original `telegram_user_id`, `telegram_message_id`, and `created_at`.
 
 ## Query Request
 
@@ -183,20 +183,20 @@ Category rules:
 
 The Google Sheet should store one transaction per row with stable column names:
 
-- `transaction_id`
-- `telegram_update_id`
-- `telegram_message_id`
-- `telegram_chat_id`
-- `telegram_user_id`
-- `occurred_on`
-- `description`
+- `id`
+- `date`
 - `amount`
 - `currency`
+- `type`
 - `category`
 - `merchant`
-- `notes`
-- `parser_confidence`
+- `payment_method`
+- `note`
+- `telegram_user_id`
+- `telegram_message_id`
 - `created_at`
 - `updated_at`
 
-Repository implementations may add internal columns only when future issues document the migration and tests cover backwards compatibility.
+The canonical worksheet name is `Transactions`. The code contract for the sheet name and header order lives in `integrations/google_sheets/schema.py`; repository implementations must import those constants instead of duplicating column names.
+
+Repository implementations may add or rename columns only when future issues document the migration and tests cover backwards compatibility.

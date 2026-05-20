@@ -29,3 +29,5 @@ uvicorn app.main:app --reload
 ```
 
 Copy `.env.example` for local configuration. The health endpoint imports and runs without real external credentials.
+
+Google Sheets setup for the MVP storage template is documented in `docs/google-sheets-template.md`.

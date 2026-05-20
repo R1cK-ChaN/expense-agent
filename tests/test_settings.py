@@ -1,4 +1,5 @@
 from config.settings import REQUIRED_SECRET_ENV_VARS, load_settings
+from integrations.google_sheets.schema import TRANSACTIONS_SHEET_NAME
 
 
 def test_settings_track_required_secret_environment_names():
@@ -7,6 +8,12 @@ def test_settings_track_required_secret_environment_names():
         "PARSER_API_KEY",
         "GOOGLE_SERVICE_ACCOUNT_JSON",
     )
+
+
+def test_settings_default_to_canonical_transactions_sheet_name():
+    settings = load_settings({})
+
+    assert settings.google_worksheet_name == TRANSACTIONS_SHEET_NAME
 
 
 def test_settings_do_not_expose_secret_values():
