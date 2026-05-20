@@ -102,12 +102,19 @@ Owns:
 - Updating exactly one resolved transaction row.
 - Looking up transactions for idempotency, update resolution, and queries.
 - Mapping domain objects to the stable `Transactions` sheet contract in `integrations/google_sheets/schema.py`.
+- Translating Google Sheets API failures into explicit repository errors.
 
 Does not own:
 
 - Natural-language parsing.
 - Telegram reply formatting.
 - Domain validation beyond defensive repository checks.
+
+The repository implementation lives in `integrations/google_sheets/repository.py`.
+Application services depend on `GoogleSheetsTransactionRepository` and its
+`SheetsValuesClient` boundary rather than calling Google API resources directly.
+The concrete `GoogleSheetsValuesClient` wraps the Sheets `spreadsheets().values()`
+API for row reads, appends, and updates.
 
 ## Data Ownership
 
@@ -162,3 +169,7 @@ Future implementation should keep these contracts independently testable:
 - Repository contract: transaction append, update, lookup, and query behavior.
 - Telegram adapter contract: Telegram update to metadata and reply call.
 - Application service contract: orchestration across parser, validation, repository, and replies.
+
+The Google Sheets repository contract is covered with an in-memory Sheets client
+so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
+provider failure mapping can be tested without real credentials.
