@@ -1,0 +1,1 @@
+"""Expense Agent application package."""
