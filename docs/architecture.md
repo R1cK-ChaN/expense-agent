@@ -61,6 +61,19 @@ Does not own:
 - Writing Google Sheets rows.
 - Business decisions about supported intents.
 
+The webhook adapter lives in `app/telegram_webhook.py` and exposes
+`POST /telegram/webhook`. It currently supports only private text messages,
+which are normalized into `TelegramInboundMessage` with Telegram user, chat,
+message, text, and received timestamp fields. Group messages are acknowledged
+and ignored for the MVP. Private non-text messages receive the fixed unsupported
+message reply. The route requires Telegram's
+`X-Telegram-Bot-Api-Secret-Token` header to match the configured webhook secret
+before any update processing or reply sending occurs.
+
+The outbound Telegram client lives in `integrations/telegram_client.py`. It
+wraps the Bot API `sendMessage` method, takes the bot token from runtime
+configuration, and accepts an injectable JSON transport for contract tests.
+
 ### Application Service
 
 Owns:
@@ -150,6 +163,7 @@ User-correctable errors should produce a clear Telegram reply and no storage mut
 Required configuration:
 
 - Telegram bot token.
+- Telegram webhook secret token.
 - Parser provider credentials and model identifier.
 - Google Sheets credentials.
 - Google Sheet identifier and worksheet name.
@@ -169,6 +183,11 @@ Future implementation should keep these contracts independently testable:
 - Repository contract: transaction append, update, lookup, and query behavior.
 - Telegram adapter contract: Telegram update to metadata and reply call.
 - Application service contract: orchestration across parser, validation, repository, and replies.
+
+The Telegram webhook contract is covered with FastAPI request tests and a fake
+reply client. The Telegram Bot API client contract is covered with a fake JSON
+transport so the tested payload targets the originating `chat_id` without using
+real credentials.
 
 The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
