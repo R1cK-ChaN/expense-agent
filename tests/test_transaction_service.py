@@ -6,6 +6,7 @@ import pytest
 from app.telegram_webhook import TelegramInboundMessage
 from core.intent_parser import (
     IntentParserResult,
+    MonthlyTotalQuery,
     ParsedExpense,
     ParserContext,
     ParserIntent,
@@ -381,6 +382,108 @@ def test_google_sheets_update_failure_returns_fallback():
     assert repository.update_calls == [("txn-latest", {"category": "办公"})]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这个月花了多少？",
+        "本月支出多少？",
+        "这月总共花了多少钱？",
+    ],
+)
+def test_query_monthly_total_returns_current_user_sgd_total(text: str):
+    parser = FakeParser(make_query_parser_result())
+    repository = FakeTransactionRepository(
+        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text=text))
+
+    assert reply == "本月支出合计：123.40 SGD"
+    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.appended_records == []
+    assert repository.update_calls == []
+
+
+def test_query_monthly_total_uses_message_timezone_for_current_month():
+    parser = FakeParser(make_query_parser_result(month="2026-05", currency="SGD"))
+    repository = FakeTransactionRepository(
+        monthly_totals={("42", "2026-05", "SGD"): Decimal("8.8")}
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(
+            text="这个月花了多少？",
+            received_at=datetime(2026, 4, 30, 16, 30, tzinfo=timezone.utc),
+        )
+    )
+
+    assert reply == "本月支出合计：8.80 SGD"
+    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+
+
+def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
+    parser = FakeParser(make_query_parser_result(currency=None))
+    repository = FakeTransactionRepository(
+        monthly_totals={("42", "2026-05", "SGD"): Decimal("11")}
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
+
+    assert reply == "本月支出合计：11.00 SGD"
+    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+
+
+def test_query_monthly_total_rejects_non_current_month_without_storage_lookup():
+    parser = FakeParser(make_query_parser_result(month="2026-04", currency="SGD"))
+    repository = FakeTransactionRepository(
+        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="上个月花了多少？"))
+
+    assert reply == "我目前只支持查询本月 SGD 支出总额。"
+    assert repository.sum_monthly_calls == []
+
+
+def test_query_monthly_total_rejects_non_sgd_currency_without_storage_lookup():
+    parser = FakeParser(make_query_parser_result(month="2026-05", currency="USD"))
+    repository = FakeTransactionRepository(
+        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="这个月 USD 花了多少？"))
+
+    assert reply == "我目前只支持查询本月 SGD 支出总额。"
+    assert repository.sum_monthly_calls == []
+
+
+def test_query_monthly_total_formats_zero_sgd_total():
+    parser = FakeParser(make_query_parser_result())
+    repository = FakeTransactionRepository()
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
+
+    assert reply == "本月支出合计：0.00 SGD"
+    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+
+
+def test_query_monthly_total_repository_failure_returns_fallback():
+    parser = FakeParser(make_query_parser_result())
+    repository = FakeTransactionRepository(fail_sum_monthly=True)
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
+
+    assert reply == PROCESSING_FAILURE_MESSAGE
+    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+
+
 def make_service(
     *,
     parser: "FakeParser",
@@ -460,6 +563,23 @@ def make_update_parser_result(
     )
 
 
+def make_query_parser_result(
+    *,
+    confidence: float = 0.9,
+    month: str = "2026-05",
+    currency: str | None = "SGD",
+) -> IntentParserResult:
+    return IntentParserResult(
+        is_success=True,
+        intent=ParserIntent.QUERY_MONTHLY_TOTAL,
+        confidence=confidence,
+        expense=None,
+        update_fields={},
+        query=MonthlyTotalQuery(month=month, currency=currency),
+        missing_fields=(),
+    )
+
+
 def format_expected_update_confirmation(record: TransactionRecord) -> str:
     parts = [
         record.date,
@@ -523,21 +643,26 @@ class FakeTransactionRepository:
         *,
         existing_record: TransactionRecord | None = None,
         latest_records: dict[str, TransactionRecord] | None = None,
+        monthly_totals: dict[tuple[str, str, str], Decimal] | None = None,
         fail_append: bool = False,
         fail_update: bool = False,
+        fail_sum_monthly: bool = False,
     ) -> None:
         self._existing_record = existing_record
         self._latest_records = latest_records or {}
         self._records_by_id = {
             record.id: record for record in self._latest_records.values()
         }
+        self._monthly_totals = monthly_totals or {}
         self._fail_append = fail_append
         self._fail_update = fail_update
+        self._fail_sum_monthly = fail_sum_monthly
         self.find_calls: list[tuple[str, str]] = []
         self.latest_calls: list[str] = []
         self.appended_records: list[TransactionRecord] = []
         self.update_calls: list[tuple[str, dict[str, object]]] = []
         self.updated_records: list[TransactionRecord] = []
+        self.sum_monthly_calls: list[tuple[str, str, str]] = []
 
     def set_latest_record(self, user_id: str, record: TransactionRecord) -> None:
         self._latest_records[user_id] = record
@@ -585,3 +710,16 @@ class FakeTransactionRepository:
         self._records_by_id[transaction_id] = updated_record
         self.updated_records.append(updated_record)
         return updated_record
+
+    def sum_monthly_expense(
+        self,
+        *,
+        user_id: str,
+        month: str,
+        currency: str,
+    ) -> Decimal:
+        self.sum_monthly_calls.append((user_id, month, currency))
+        if self._fail_sum_monthly:
+            raise TransactionRepositoryError("sum failed")
+
+        return self._monthly_totals.get((user_id, month, currency), Decimal("0"))

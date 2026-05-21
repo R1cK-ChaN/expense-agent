@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -28,6 +29,8 @@ PROCESSING_FAILURE_MESSAGE = "抱歉，暂时没能记账，请稍后再试。"
 NO_RECENT_EXPENSE_MESSAGE = "我还没有找到你最近的支出记录。"
 MIN_CREATE_EXPENSE_CONFIDENCE = 0.7
 MIN_UPDATE_EXPENSE_CONFIDENCE = 0.7
+MIN_QUERY_MONTHLY_TOTAL_CONFIDENCE = 0.7
+MONTHLY_TOTAL_AMOUNT_QUANTUM = Decimal("0.01")
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,15 @@ class TransactionRepository(Protocol):
         transaction_id: str,
         fields: Mapping[str, object],
     ) -> TransactionRecord:
+        raise NotImplementedError
+
+    def sum_monthly_expense(
+        self,
+        *,
+        user_id: str,
+        month: str,
+        currency: str,
+    ) -> Decimal:
         raise NotImplementedError
 
 
@@ -158,6 +170,12 @@ class TransactionService:
                 message=message,
             )
 
+        if parser_result.intent is ParserIntent.QUERY_MONTHLY_TOTAL:
+            return self._handle_query_monthly_total(
+                parser_result,
+                message=message,
+            )
+
         if parser_result.intent is not ParserIntent.CREATE_EXPENSE:
             return UNKNOWN_INTENT_MESSAGE
 
@@ -235,6 +253,38 @@ class TransactionService:
         self._update_targets_by_message[update_message_key] = updated_record.id
         return _format_update_confirmation(updated_record)
 
+    def _handle_query_monthly_total(
+        self,
+        parser_result: IntentParserResult,
+        *,
+        message: TelegramMessage,
+    ) -> str:
+        if parser_result.confidence < MIN_QUERY_MONTHLY_TOTAL_CONFIDENCE:
+            return LOW_CONFIDENCE_MESSAGE
+
+        query = parser_result.query
+        if query is None:
+            logger.error("Monthly total query intent missing query fields.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        current_month = _message_month(message.received_at, self._timezone)
+        currency = _normalize_currency(self._default_currency)
+        query_currency = _normalize_currency(query.currency or self._default_currency)
+        if query.month != current_month or query_currency != currency:
+            return _format_unsupported_monthly_total_reply(currency)
+
+        try:
+            total = self._repository.sum_monthly_expense(
+                user_id=message.telegram_user_id,
+                month=current_month,
+                currency=currency,
+            )
+        except TransactionRepositoryError:
+            logger.exception("Failed to sum monthly expense.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        return _format_monthly_total_reply(total, currency)
+
     def _new_transaction_record(
         self,
         expense: ValidatedExpense,
@@ -267,6 +317,15 @@ def _format_update_confirmation(record: TransactionRecord) -> str:
     return "已更新：" + _format_record_summary(record)
 
 
+def _format_monthly_total_reply(total: Decimal, currency: str) -> str:
+    amount = total.quantize(MONTHLY_TOTAL_AMOUNT_QUANTUM)
+    return f"本月支出合计：{amount:f} {currency}"
+
+
+def _format_unsupported_monthly_total_reply(currency: str) -> str:
+    return f"我目前只支持查询本月 {currency} 支出总额。"
+
+
 def _format_record_summary(record: TransactionRecord) -> str:
     parts = [
         record.date,
@@ -285,6 +344,14 @@ def _message_date(timestamp: datetime, timezone_name: str) -> date:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
     return timestamp.astimezone(ZoneInfo(timezone_name)).date()
+
+
+def _message_month(timestamp: datetime, timezone_name: str) -> str:
+    return _message_date(timestamp, timezone_name).strftime("%Y-%m")
+
+
+def _normalize_currency(currency: str) -> str:
+    return currency.strip().upper()
 
 
 def _format_timestamp(timestamp: datetime) -> str:
