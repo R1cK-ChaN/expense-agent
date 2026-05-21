@@ -91,6 +91,21 @@ Does not own:
 - Prompt wording or LLM provider internals.
 - Google Sheets API details.
 
+Create-expense orchestration lives in `core/transaction_service.py`. The
+service accepts normalized Telegram message metadata, checks the repository for
+an existing `telegram_user_id` and `telegram_message_id` before parsing, sends
+the raw text to the parser, validates create-expense output, appends one
+transaction row, and returns the reply text for the Telegram adapter to send.
+Low-confidence create-expense parser results produce a clarification reply and
+do not write to storage.
+Duplicate Telegram retries return the stored transaction confirmation without a
+second append.
+
+`app/main.py` wires this service as the default Telegram text handler when the
+parser credentials, parser model, Google service account JSON, and Google Sheet
+ID are configured. Without those runtime settings, the app still imports and
+serves health checks without external credentials.
+
 ### Domain Validation
 
 Owns:
@@ -235,3 +250,10 @@ provider failure mapping can be tested without real credentials.
 The domain validation contract is covered with unit tests for missing and
 non-positive amounts, timezone-based date defaults, default currency, category
 fallback, expense-only type enforcement, and multiple-expense rejection.
+
+The create-expense application service contract is covered with fake parser and
+repository tests for successful appends, configured defaults, relative dates,
+missing amount, duplicate Telegram retries, low-confidence parser output,
+unknown intent, parser failure, and Google Sheets write failure. App bootstrap
+tests also cover the configured runtime wiring from webhook message to sheet
+append and Telegram reply.
