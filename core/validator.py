@@ -19,6 +19,21 @@ INVALID_CURRENCY_MESSAGE = "货币代码需要是 3 位字母，请重新发送�
 UNSUPPORTED_TYPE_MESSAGE = "目前只支持记录支出。"
 MULTIPLE_EXPENSES_MESSAGE = "目前一条消息只能记录一笔支出，请分开发送。"
 PARSER_FAILURE_MESSAGE = "这条消息暂时无法识别，请重新发送。"
+MISSING_UPDATE_FIELDS_MESSAGE = "请说明要修改金额、日期、分类、商家或支付方式。"
+UNSUPPORTED_UPDATE_FIELD_MESSAGE = (
+    "这项修改我还不支持，请改金额、日期、分类、商家或支付方式。"
+)
+UNSUPPORTED_CATEGORY_MESSAGE = "这个分类暂不支持，请重新发送。"
+
+SUPPORTED_UPDATE_FIELDS = frozenset(
+    {
+        "date",
+        "amount",
+        "category",
+        "merchant",
+        "payment_method",
+    }
+)
 
 _CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
 _AMOUNT_PATTERN = re.compile(r"(?<![\d:/-])\d+(?:\.\d+)?(?![\d:/-])")
@@ -42,6 +57,9 @@ class ValidationErrorCode(StrEnum):
     UNSUPPORTED_TYPE = "unsupported_type"
     MULTIPLE_EXPENSES = "multiple_expenses"
     PARSER_FAILURE = "parser_failure"
+    MISSING_UPDATE_FIELDS = "missing_update_fields"
+    UNSUPPORTED_UPDATE_FIELD = "unsupported_update_field"
+    UNSUPPORTED_CATEGORY = "unsupported_category"
 
 
 @dataclass(frozen=True)
@@ -73,6 +91,19 @@ class ValidatedExpense:
 class ValidationResult:
     is_valid: bool
     expense: ValidatedExpense | None
+    errors: tuple[ValidationError, ...]
+
+    @property
+    def user_message(self) -> str | None:
+        if not self.errors:
+            return None
+        return self.errors[0].message
+
+
+@dataclass(frozen=True)
+class UpdateValidationResult:
+    is_valid: bool
+    update_fields: dict[str, object]
     errors: tuple[ValidationError, ...]
 
     @property
@@ -139,10 +170,99 @@ def validate_create_expense(
     )
 
 
+def validate_update_recent_expense(
+    parser_result: IntentParserResult,
+    *,
+    context: ValidationContext,
+) -> UpdateValidationResult:
+    if not parser_result.is_success:
+        return _invalid_update(
+            ValidationErrorCode.PARSER_FAILURE,
+            PARSER_FAILURE_MESSAGE,
+        )
+
+    if parser_result.intent is not ParserIntent.UPDATE_RECENT_EXPENSE:
+        return _invalid_update(
+            ValidationErrorCode.UNSUPPORTED_TYPE,
+            UNSUPPORTED_TYPE_MESSAGE,
+        )
+
+    if not parser_result.update_fields:
+        return _invalid_update(
+            ValidationErrorCode.MISSING_UPDATE_FIELDS,
+            MISSING_UPDATE_FIELDS_MESSAGE,
+        )
+
+    invalid_fields = set(parser_result.update_fields) - SUPPORTED_UPDATE_FIELDS
+    if invalid_fields:
+        return _invalid_update(
+            ValidationErrorCode.UNSUPPORTED_UPDATE_FIELD,
+            UNSUPPORTED_UPDATE_FIELD_MESSAGE,
+        )
+
+    normalized_fields: dict[str, object] = {}
+    for field_name, value in parser_result.update_fields.items():
+        if field_name == "amount":
+            amount = _normalize_amount(value)
+            if amount is None:
+                return _invalid_update(
+                    ValidationErrorCode.INVALID_AMOUNT,
+                    INVALID_AMOUNT_MESSAGE,
+                )
+            normalized_fields[field_name] = amount
+        elif field_name == "date":
+            date_value = _normalize_update_date(value)
+            if date_value is None:
+                return _invalid_update(
+                    ValidationErrorCode.INVALID_DATE,
+                    INVALID_DATE_MESSAGE,
+                )
+            normalized_fields[field_name] = date_value
+        elif field_name == "category":
+            category = _normalize_update_text(value)
+            if category is None or category not in SUPPORTED_CATEGORY_SET:
+                return _invalid_update(
+                    ValidationErrorCode.UNSUPPORTED_CATEGORY,
+                    UNSUPPORTED_CATEGORY_MESSAGE,
+                )
+            normalized_fields[field_name] = category
+        elif field_name in {"merchant", "payment_method"}:
+            text = _normalize_update_text(value)
+            if text is None:
+                return _invalid_update(
+                    ValidationErrorCode.MISSING_UPDATE_FIELDS,
+                    MISSING_UPDATE_FIELDS_MESSAGE,
+                )
+            normalized_fields[field_name] = text
+
+    if not normalized_fields:
+        return _invalid_update(
+            ValidationErrorCode.MISSING_UPDATE_FIELDS,
+            MISSING_UPDATE_FIELDS_MESSAGE,
+        )
+
+    return UpdateValidationResult(
+        is_valid=True,
+        update_fields=normalized_fields,
+        errors=(),
+    )
+
+
 def _invalid(code: ValidationErrorCode, message: str) -> ValidationResult:
     return ValidationResult(
         is_valid=False,
         expense=None,
+        errors=(ValidationError(code=code, message=message),),
+    )
+
+
+def _invalid_update(
+    code: ValidationErrorCode,
+    message: str,
+) -> UpdateValidationResult:
+    return UpdateValidationResult(
+        is_valid=False,
+        update_fields={},
         errors=(ValidationError(code=code, message=message),),
     )
 
@@ -182,6 +302,37 @@ def _normalize_currency(
     if not _CURRENCY_PATTERN.fullmatch(currency):
         return None
     return currency
+
+
+def _normalize_amount(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        amount = Decimal(str(value))
+    except Exception:
+        return None
+
+    if not amount.is_finite() or amount <= Decimal("0"):
+        return None
+    return amount
+
+
+def _normalize_update_date(value: object) -> str | None:
+    text = _normalize_update_text(value)
+    if text is None:
+        return None
+
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
+
+
+def _normalize_update_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return _normalize_optional_text(value)
 
 
 def _normalize_category(value: str | None) -> str:

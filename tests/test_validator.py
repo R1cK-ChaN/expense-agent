@@ -6,12 +6,16 @@ import pytest
 from core.intent_parser import IntentParserResult, ParsedExpense, ParserIntent
 from core.validator import (
     DEFAULT_EXPENSE_CATEGORY,
+    INVALID_AMOUNT_MESSAGE,
+    INVALID_DATE_MESSAGE,
     MISSING_AMOUNT_MESSAGE,
     MULTIPLE_EXPENSES_MESSAGE,
+    UNSUPPORTED_UPDATE_FIELD_MESSAGE,
     UNSUPPORTED_TYPE_MESSAGE,
     ValidationContext,
     ValidationErrorCode,
     validate_create_expense,
+    validate_update_recent_expense,
 )
 
 
@@ -165,6 +169,84 @@ def test_validation_normalizes_safe_create_expense_fields():
     assert result.expense.note == "午饭"
 
 
+def test_update_validation_accepts_issue_9_supported_fields():
+    result = validate_update_recent_expense(
+        make_update_parser_result(
+            update_fields={
+                "date": "2026-05-19",
+                "amount": Decimal("18.60"),
+                "category": "办公",
+                "merchant": " Grab ",
+                "payment_method": " Visa ",
+            }
+        ),
+        context=make_context(),
+    )
+
+    assert result.is_valid is True
+    assert result.errors == ()
+    assert result.update_fields == {
+        "date": "2026-05-19",
+        "amount": Decimal("18.60"),
+        "category": "办公",
+        "merchant": "Grab",
+        "payment_method": "Visa",
+    }
+
+
+def test_update_validation_rejects_unsupported_fields_without_partial_update():
+    result = validate_update_recent_expense(
+        make_update_parser_result(
+            update_fields={
+                "amount": Decimal("18.60"),
+                "currency": "USD",
+            }
+        ),
+        context=make_context(),
+    )
+
+    assert result.is_valid is False
+    assert result.update_fields == {}
+    assert result.user_message == UNSUPPORTED_UPDATE_FIELD_MESSAGE
+    assert result.errors[0].code is ValidationErrorCode.UNSUPPORTED_UPDATE_FIELD
+
+
+@pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-0.01")])
+def test_update_validation_rejects_non_positive_amounts(amount):
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"amount": amount}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is False
+    assert result.update_fields == {}
+    assert result.user_message == INVALID_AMOUNT_MESSAGE
+    assert result.errors[0].code is ValidationErrorCode.INVALID_AMOUNT
+
+
+def test_update_validation_rejects_invalid_dates():
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"date": "2026-02-31"}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is False
+    assert result.update_fields == {}
+    assert result.user_message == INVALID_DATE_MESSAGE
+    assert result.errors[0].code is ValidationErrorCode.INVALID_DATE
+
+
+def test_update_validation_rejects_unsupported_categories():
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"category": "宠物"}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is False
+    assert result.update_fields == {}
+    assert result.errors[0].code is ValidationErrorCode.UNSUPPORTED_CATEGORY
+
+
 def make_context(
     *,
     now: datetime = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
@@ -175,6 +257,21 @@ def make_context(
         timezone=timezone_name,
         default_currency=default_currency,
         now=now,
+    )
+
+
+def make_update_parser_result(
+    *,
+    update_fields: dict[str, object],
+) -> IntentParserResult:
+    return IntentParserResult(
+        is_success=True,
+        intent=ParserIntent.UPDATE_RECENT_EXPENSE,
+        confidence=0.9,
+        expense=None,
+        update_fields=update_fields,
+        query=None,
+        missing_fields=(),
     )
 
 

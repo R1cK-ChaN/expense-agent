@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Protocol
 
-from core.categories import SUPPORTED_CATEGORIES, SUPPORTED_CATEGORY_SET
+from core.categories import SUPPORTED_CATEGORIES
 
 REQUIRED_TOP_LEVEL_KEYS = frozenset(
     {
@@ -32,7 +32,7 @@ REQUIRED_EXPENSE_KEYS = frozenset(
     }
 )
 
-ALLOWED_UPDATE_FIELDS = frozenset(REQUIRED_EXPENSE_KEYS)
+KNOWN_UPDATE_FIELDS = REQUIRED_EXPENSE_KEYS | {"type"}
 
 
 class ParserIntent(StrEnum):
@@ -260,29 +260,24 @@ def _parse_update_fields(
     if not isinstance(value, Mapping):
         raise ValueError("update_fields must be an object.")
 
-    invalid_fields = set(value) - ALLOWED_UPDATE_FIELDS
-    if invalid_fields:
-        raise ValueError("update_fields contains unsupported fields.")
-
     parsed_fields: dict[str, object] = {}
     for field_name, field_value in value.items():
-        if field_name == "category":
-            parsed_value = _parse_category(field_value)
-        elif field_name == "amount":
+        if not isinstance(field_name, str):
+            raise ValueError("update_fields keys must be strings.")
+
+        if field_name == "amount":
             parsed_value = _parse_optional_decimal(field_value, "update_fields.amount")
-        elif field_name in {"date", "currency", "merchant", "payment_method", "note"}:
+        elif field_name in KNOWN_UPDATE_FIELDS:
             parsed_value = _parse_optional_string(
                 field_value,
                 f"update_fields.{field_name}",
             )
         else:
-            raise ValueError("update_fields contains unsupported fields.")
+            parsed_fields[field_name] = field_value
+            continue
 
         if parsed_value is not None:
             parsed_fields[field_name] = parsed_value
-
-    if intent is ParserIntent.UPDATE_RECENT_EXPENSE and not parsed_fields:
-        raise ValueError("update_recent_expense requires update_fields.")
 
     return parsed_fields
 
@@ -305,13 +300,6 @@ def _parse_query(value: object, intent: ParserIntent) -> MonthlyTotalQuery | Non
         month=month,
         currency=_parse_optional_string(value.get("currency"), "query.currency"),
     )
-
-
-def _parse_category(value: object) -> str | None:
-    category = _parse_optional_string(value, "category")
-    if category is not None and category not in SUPPORTED_CATEGORY_SET:
-        raise ValueError("Unsupported category.")
-    return category
 
 
 def _parse_optional_string(value: object, field_name: str) -> str | None:

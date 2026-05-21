@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, timezone
 from typing import Protocol
 from uuid import uuid4
@@ -10,7 +10,9 @@ from core.validator import (
     ValidationContext,
     ValidationResult,
     ValidatedExpense,
+    UpdateValidationResult,
     validate_create_expense,
+    validate_update_recent_expense,
 )
 from integrations.google_sheets.repository import (
     TransactionRecord,
@@ -23,7 +25,9 @@ UNKNOWN_INTENT_MESSAGE = (
 )
 LOW_CONFIDENCE_MESSAGE = "这条消息我不太确定，请换个说法或补充金额、商家。"
 PROCESSING_FAILURE_MESSAGE = "抱歉，暂时没能记账，请稍后再试。"
+NO_RECENT_EXPENSE_MESSAGE = "我还没有找到你最近的支出记录。"
 MIN_CREATE_EXPENSE_CONFIDENCE = 0.7
+MIN_UPDATE_EXPENSE_CONFIDENCE = 0.7
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,20 @@ class TransactionRepository(Protocol):
     def append_transaction(self, record: TransactionRecord) -> TransactionRecord:
         raise NotImplementedError
 
+    def get_latest_transaction(
+        self,
+        *,
+        user_id: str,
+    ) -> TransactionRecord | None:
+        raise NotImplementedError
+
+    def update_transaction(
+        self,
+        transaction_id: str,
+        fields: Mapping[str, object],
+    ) -> TransactionRecord:
+        raise NotImplementedError
+
 
 class CreateExpenseValidator(Protocol):
     def __call__(
@@ -69,6 +87,16 @@ class CreateExpenseValidator(Protocol):
         raise NotImplementedError
 
 
+class UpdateExpenseValidator(Protocol):
+    def __call__(
+        self,
+        parser_result: IntentParserResult,
+        *,
+        context: ValidationContext,
+    ) -> UpdateValidationResult:
+        raise NotImplementedError
+
+
 class TransactionService:
     def __init__(
         self,
@@ -78,6 +106,7 @@ class TransactionService:
         timezone: str,
         default_currency: str,
         validator: CreateExpenseValidator = validate_create_expense,
+        update_validator: UpdateExpenseValidator = validate_update_recent_expense,
         clock: Callable[[], datetime] | None = None,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
@@ -86,8 +115,10 @@ class TransactionService:
         self._timezone = timezone
         self._default_currency = default_currency
         self._validator = validator
+        self._update_validator = update_validator
         self._clock = clock or _utc_now
         self._id_factory = id_factory or _default_transaction_id
+        self._update_targets_by_message: dict[tuple[str, str], str] = {}
 
     def __call__(self, message: TelegramMessage) -> str:
         return self.handle_telegram_message(message)
@@ -121,6 +152,12 @@ class TransactionService:
         if not parser_result.is_success:
             return PROCESSING_FAILURE_MESSAGE
 
+        if parser_result.intent is ParserIntent.UPDATE_RECENT_EXPENSE:
+            return self._handle_update_recent_expense(
+                parser_result,
+                message=message,
+            )
+
         if parser_result.intent is not ParserIntent.CREATE_EXPENSE:
             return UNKNOWN_INTENT_MESSAGE
 
@@ -151,6 +188,53 @@ class TransactionService:
 
         return _format_confirmation(saved_record)
 
+    def _handle_update_recent_expense(
+        self,
+        parser_result: IntentParserResult,
+        *,
+        message: TelegramMessage,
+    ) -> str:
+        if parser_result.confidence < MIN_UPDATE_EXPENSE_CONFIDENCE:
+            return LOW_CONFIDENCE_MESSAGE
+
+        validation = self._update_validator(
+            parser_result,
+            context=ValidationContext(
+                timezone=self._timezone,
+                default_currency=self._default_currency,
+                now=message.received_at,
+            ),
+        )
+        if not validation.is_valid:
+            return validation.user_message or UNKNOWN_INTENT_MESSAGE
+
+        update_message_key = (message.telegram_user_id, message.message_id)
+        transaction_id = self._update_targets_by_message.get(update_message_key)
+        if transaction_id is None:
+            try:
+                latest_record = self._repository.get_latest_transaction(
+                    user_id=message.telegram_user_id,
+                )
+            except TransactionRepositoryError:
+                logger.exception("Failed to load latest transaction.")
+                return PROCESSING_FAILURE_MESSAGE
+
+            if latest_record is None:
+                return NO_RECENT_EXPENSE_MESSAGE
+            transaction_id = latest_record.id
+
+        try:
+            updated_record = self._repository.update_transaction(
+                transaction_id,
+                validation.update_fields,
+            )
+        except TransactionRepositoryError:
+            logger.exception("Failed to update transaction.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        self._update_targets_by_message[update_message_key] = updated_record.id
+        return _format_update_confirmation(updated_record)
+
     def _new_transaction_record(
         self,
         expense: ValidatedExpense,
@@ -176,6 +260,14 @@ class TransactionService:
 
 
 def _format_confirmation(record: TransactionRecord) -> str:
+    return "已记录：" + _format_record_summary(record)
+
+
+def _format_update_confirmation(record: TransactionRecord) -> str:
+    return "已更新：" + _format_record_summary(record)
+
+
+def _format_record_summary(record: TransactionRecord) -> str:
     parts = [
         record.date,
         record.category,
@@ -186,7 +278,7 @@ def _format_confirmation(record: TransactionRecord) -> str:
     if description:
         parts.append(description)
 
-    return "已记录：" + " ".join(parts)
+    return " ".join(parts)
 
 
 def _message_date(timestamp: datetime, timezone_name: str) -> date:

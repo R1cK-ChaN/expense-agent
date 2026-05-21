@@ -126,22 +126,25 @@ Fields:
 - `requested_by_user_id`: Telegram user requesting the update.
 - `requested_at`: backend timestamp.
 
-Supported update fields:
+Supported update fields for the update-recent MVP:
 
 - `date`
-- `type`
 - `amount`
-- `currency`
 - `category`
 - `merchant`
 - `payment_method`
-- `note`
+
+`type`, `currency`, `note`, arbitrary historical targeting, and multi-record
+updates are out of scope until a future issue expands the update contract.
 
 Invariants:
 
 - The target must resolve to exactly one transaction before any write occurs.
 - A user can update only transactions associated with the same Telegram user or chat policy defined by the implementation issue.
-- Every changed field must satisfy the same validation rules used for transaction creation.
+- Within one service process, duplicate Telegram deliveries for the same update
+  message reuse the transaction target chosen for the first successful update.
+- Every changed field must satisfy the relevant transaction validation rules
+  before storage is mutated.
 - Updates must preserve the original `telegram_user_id`, `telegram_message_id`, and `created_at`.
 
 ## Query Request

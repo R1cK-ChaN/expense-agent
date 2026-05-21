@@ -132,6 +132,56 @@ def test_parser_extracts_update_recent_expense_fields():
     assert result.update_fields == {"category": "交通"}
 
 
+def test_parser_preserves_update_fields_for_domain_validation():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "update_recent_expense",
+            "confidence": 0.9,
+            "expense": None,
+            "update_fields": {
+                "category": "宠物",
+                "currency": "USD",
+                "type": "income",
+                "telegram_user_id": "7",
+            },
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("刚才那笔改一下", context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UPDATE_RECENT_EXPENSE
+    assert result.update_fields == {
+        "category": "宠物",
+        "currency": "USD",
+        "type": "income",
+        "telegram_user_id": "7",
+    }
+
+
+def test_parser_allows_update_recent_expense_with_empty_fields_for_validator():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "update_recent_expense",
+            "confidence": 0.9,
+            "expense": None,
+            "update_fields": {},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("刚才那笔改一下", context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UPDATE_RECENT_EXPENSE
+    assert result.update_fields == {}
+
+
 def test_parser_extracts_monthly_total_query():
     llm_client = FakeLLMClient(
         {
