@@ -31,3 +31,10 @@ uvicorn app.main:app --reload
 Copy `.env.example` for local configuration. The health endpoint imports and runs without real external credentials.
 
 Google Sheets setup for the MVP storage template is documented in `docs/google-sheets-template.md`.
+
+## Deployment
+
+CI/CD for Cloud Run is defined in `.github/workflows/`. Pull requests run
+`pytest`; merges to `main` build the Docker image, deploy to Cloud Run through
+Workload Identity Federation, and verify `/health`. Setup details are in
+`docs/cloud-run-cicd.md`.
