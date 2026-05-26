@@ -222,6 +222,17 @@ Secrets must come from environment variables or a secret manager. They must not 
 
 The Google Sheet must contain a worksheet named `Transactions` with the required header row described in `docs/google-sheets-template.md`.
 
+## Delivery
+
+GitHub Actions provides the delivery boundary for this service. Pull requests
+run the repository test suite before merge. Pushes to `main` authenticate to
+Google Cloud with Workload Identity Federation, build the Dockerfile with Cloud
+Build, deploy the image to Cloud Run, and check `/health`.
+
+Runtime secret values remain in GCP Secret Manager. The deploy workflow accepts
+only secret names and versions through `CLOUD_RUN_SECRET_MAPPINGS`; it does not
+store Telegram, parser, or Google credential values in GitHub.
+
 ## Testable Contracts
 
 Future implementation should keep these contracts independently testable:
