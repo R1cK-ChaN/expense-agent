@@ -75,6 +75,13 @@ def test_settings_load_telegram_bot_token_without_public_exposure():
     assert settings.public_dict()["secrets"]["TELEGRAM_WEBHOOK_SECRET"] == "<set>"
 
 
+def test_settings_load_optional_telegram_bot_username():
+    settings = load_settings({"TELEGRAM_BOT_USERNAME": "@ExpenseAgentBot"})
+
+    assert settings.telegram_bot_username == "ExpenseAgentBot"
+    assert settings.public_dict()["telegram_bot_username"] == "ExpenseAgentBot"
+
+
 def test_blank_optional_environment_values_are_unconfigured():
     settings = load_settings(
         {

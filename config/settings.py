@@ -21,6 +21,7 @@ class Settings:
     parser_model: str | None
     google_sheet_id: str | None
     google_worksheet_name: str
+    telegram_bot_username: str | None
     telegram_bot_token: str | None = field(repr=False)
     telegram_webhook_secret: str | None = field(repr=False)
     parser_api_key: str | None = field(repr=False)
@@ -34,6 +35,7 @@ class Settings:
             "parser_model": self.parser_model,
             "google_sheet_id_configured": bool(self.google_sheet_id),
             "google_worksheet_name": self.google_worksheet_name,
+            "telegram_bot_username": self.telegram_bot_username,
             "secrets": {
                 name: _secret_status(getattr(self, _env_name_to_field(name)))
                 for name in REQUIRED_SECRET_ENV_VARS
@@ -53,6 +55,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "GOOGLE_WORKSHEET_NAME",
             TRANSACTIONS_SHEET_NAME,
         ),
+        telegram_bot_username=_telegram_bot_username(values),
         telegram_bot_token=_optional_value(values, "TELEGRAM_BOT_TOKEN"),
         telegram_webhook_secret=_optional_value(
             values,
@@ -68,6 +71,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
 def _optional_value(values: Mapping[str, str], name: str) -> str | None:
     return values.get(name) or None
+
+
+def _telegram_bot_username(values: Mapping[str, str]) -> str | None:
+    value = _optional_value(values, "TELEGRAM_BOT_USERNAME")
+    if value is None:
+        return None
+    username = value.strip().removeprefix("@")
+    return username or None
 
 
 def _env_name_to_field(name: str) -> str:

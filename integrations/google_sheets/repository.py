@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from integrations.google_sheets.schema import (
     TRANSACTION_HEADERS,
@@ -87,6 +88,9 @@ class TransactionRecord:
     payment_method: str | None
     note: str | None
     telegram_user_id: str
+    telegram_username: str | None
+    telegram_user_display_name: str | None
+    telegram_chat_id: str
     telegram_message_id: str
     created_at: str
     updated_at: str
@@ -98,10 +102,12 @@ class GoogleSheetsTransactionRepository:
         *,
         sheet_id: str,
         sheets_client: SheetsValuesClient,
+        timezone: str = "Asia/Singapore",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._sheet_id = sheet_id
         self._sheets_client = sheets_client
+        self._timezone = timezone
         self._clock = clock or _utc_now
 
     def append_transaction(self, record: TransactionRecord) -> TransactionRecord:
@@ -124,11 +130,13 @@ class GoogleSheetsTransactionRepository:
         self,
         *,
         user_id: str,
+        chat_id: str,
         message_id: str,
     ) -> TransactionRecord | None:
         for _row_number, record in self._load_records():
             if (
                 record.telegram_user_id == str(user_id)
+                and record.telegram_chat_id == str(chat_id)
                 and record.telegram_message_id == str(message_id)
             ):
                 return record
@@ -163,7 +171,7 @@ class GoogleSheetsTransactionRepository:
                 updated_record = _apply_updates(
                     record,
                     fields,
-                    updated_at=_format_timestamp(self._clock()),
+                    updated_at=_format_timestamp(self._clock(), self._timezone),
                 )
                 self._update_row(row_number, updated_record)
                 return updated_record
@@ -336,6 +344,11 @@ def _values_to_record(values: Mapping[str, object]) -> TransactionRecord:
         payment_method=_optional_string(values["payment_method"]),
         note=_optional_string(values["note"]),
         telegram_user_id=str(values["telegram_user_id"]),
+        telegram_username=_optional_string(values["telegram_username"]),
+        telegram_user_display_name=_optional_string(
+            values["telegram_user_display_name"]
+        ),
+        telegram_chat_id=str(values["telegram_chat_id"]),
         telegram_message_id=str(values["telegram_message_id"]),
         created_at=str(values["created_at"]),
         updated_at=str(values["updated_at"]),
@@ -350,6 +363,12 @@ def _record_to_row(record: TransactionRecord) -> list[str]:
 
 
 def _row_to_record(row: Sequence[str]) -> TransactionRecord:
+    if len(row) < len(TRANSACTION_HEADERS):
+        raise TransactionSheetSchemaError(
+            f"{TRANSACTIONS_SHEET_NAME} row is missing required transaction "
+            "columns. Complete the sheet schema migration before reading rows."
+        )
+
     values = [_cell_to_string(cell) for cell in _pad_row(row)]
     return TransactionRecord(
         id=values[0],
@@ -362,9 +381,12 @@ def _row_to_record(row: Sequence[str]) -> TransactionRecord:
         payment_method=_blank_to_none(values[7]),
         note=_blank_to_none(values[8]),
         telegram_user_id=values[9],
-        telegram_message_id=values[10],
-        created_at=values[11],
-        updated_at=values[12],
+        telegram_username=_blank_to_none(values[10]),
+        telegram_user_display_name=_blank_to_none(values[11]),
+        telegram_chat_id=values[12],
+        telegram_message_id=values[13],
+        created_at=values[14],
+        updated_at=values[15],
     )
 
 
@@ -418,10 +440,10 @@ def _created_at_sort_key(record: TransactionRecord) -> datetime:
         ) from error
 
 
-def _format_timestamp(timestamp: datetime) -> str:
+def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc).isoformat()
+        timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
+    return timestamp.astimezone(ZoneInfo(timezone_name)).isoformat()
 
 
 def _validate_month(month: str) -> None:

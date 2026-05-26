@@ -29,7 +29,13 @@ def test_webhook_converts_private_text_message_and_replies():
                 "message_id": 9001,
                 "date": int(received_at.timestamp()),
                 "chat": {"id": 12345, "type": "private"},
-                "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
+                "from": {
+                    "id": 42,
+                    "is_bot": False,
+                    "first_name": "Ada",
+                    "last_name": "Lovelace",
+                    "username": "ada",
+                },
                 "text": "lunch 12.30",
             },
         },
@@ -45,6 +51,8 @@ def test_webhook_converts_private_text_message_and_replies():
             message_id="9001",
             message_text="lunch 12.30",
             received_at=received_at,
+            telegram_username="ada",
+            telegram_user_display_name="Ada Lovelace",
         )
     ]
     assert reply_client.sent_messages == [
@@ -56,11 +64,52 @@ def test_webhook_converts_private_text_message_and_replies():
     ]
 
 
-def test_webhook_ignores_group_messages_without_replying():
+def test_webhook_derives_display_name_when_username_is_absent():
     reply_client = FakeTelegramReplyClient()
+    handled_messages: list[TelegramInboundMessage] = []
+    received_at = datetime(2026, 5, 20, 12, 3, tzinfo=timezone.utc)
     app = create_app(
         telegram_reply_client=reply_client,
         telegram_webhook_secret=WEBHOOK_SECRET,
+        telegram_text_handler=lambda message: handled_messages.append(message)
+        or "fixed reply",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1001,
+            "message": {
+                "message_id": 9002,
+                "date": int(received_at.timestamp()),
+                "chat": {"id": 12345, "type": "private"},
+                "from": {
+                    "id": 42,
+                    "is_bot": False,
+                    "first_name": "Ada",
+                    "last_name": "Lovelace",
+                },
+                "text": "lunch 12.30",
+            },
+        },
+        headers=secret_headers(),
+    )
+
+    assert response.status_code == 200
+    assert handled_messages[0].telegram_username is None
+    assert handled_messages[0].telegram_user_display_name == "Ada Lovelace"
+
+
+def test_webhook_processes_group_mention_and_strips_bot_username():
+    reply_client = FakeTelegramReplyClient()
+    handled_messages: list[TelegramInboundMessage] = []
+    app = create_app(
+        telegram_reply_client=reply_client,
+        telegram_webhook_secret=WEBHOOK_SECRET,
+        telegram_bot_username="ExpenseAgentBot",
+        telegram_text_handler=lambda message: handled_messages.append(message)
+        or "fixed group reply",
     )
     client = TestClient(app)
     received_at = datetime(2026, 5, 20, 12, 5, tzinfo=timezone.utc)
@@ -71,6 +120,59 @@ def test_webhook_ignores_group_messages_without_replying():
             "update_id": 1001,
             "message": {
                 "message_id": 9002,
+                "date": int(received_at.timestamp()),
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {
+                    "id": 42,
+                    "is_bot": False,
+                    "first_name": "Ada",
+                    "last_name": "Lovelace",
+                    "username": "ada",
+                },
+                "text": "@ExpenseAgentBot lunch 12.30",
+            },
+        },
+        headers=secret_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "status": "replied"}
+    assert handled_messages == [
+        TelegramInboundMessage(
+            telegram_user_id="42",
+            chat_id="-100123",
+            message_id="9002",
+            message_text="lunch 12.30",
+            received_at=received_at,
+            telegram_username="ada",
+            telegram_user_display_name="Ada Lovelace",
+        )
+    ]
+    assert reply_client.sent_messages == [
+        {
+            "chat_id": "-100123",
+            "text": "fixed group reply",
+            "reply_to_message_id": "9002",
+        }
+    ]
+
+
+def test_webhook_ignores_group_messages_without_bot_mention():
+    reply_client = FakeTelegramReplyClient()
+    app = create_app(
+        telegram_reply_client=reply_client,
+        telegram_webhook_secret=WEBHOOK_SECRET,
+        telegram_bot_username="ExpenseAgentBot",
+    )
+    client = TestClient(app)
+    received_at = datetime(2026, 5, 20, 12, 6, tzinfo=timezone.utc)
+
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1001,
+            "message": {
+                "message_id": 9003,
                 "date": int(received_at.timestamp()),
                 "chat": {"id": -100123, "type": "group"},
                 "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
@@ -84,7 +186,7 @@ def test_webhook_ignores_group_messages_without_replying():
     assert response.json() == {
         "ok": True,
         "status": "ignored",
-        "reason": "unsupported_chat_type",
+        "reason": "bot_not_mentioned",
     }
     assert reply_client.sent_messages == []
 

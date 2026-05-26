@@ -3,10 +3,11 @@
 ## Runtime Configuration
 
 Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the service
-environment before handling private messages. The health endpoint still starts
-without external credentials, but webhook payloads need the secret for request
-verification and private text or non-text payloads need the bot token so the
-service can send Telegram replies.
+environment before handling messages. Set `TELEGRAM_BOT_USERNAME` without the
+leading `@` when the bot should process explicit group or supergroup mentions.
+The health endpoint still starts without external credentials, but webhook
+payloads need the secret for request verification and handled text or non-text
+payloads need the bot token so the service can send Telegram replies.
 
 ## Route
 
@@ -18,10 +19,13 @@ POST /telegram/webhook
 
 Current MVP behavior:
 
-- Private text messages are normalized for later orchestration and receive a
-  fixed placeholder reply.
+- Private text messages are normalized for orchestration and receive the handler
+  reply.
 - Private non-text messages receive the unsupported-message reply.
-- Group messages are acknowledged with HTTP 200 and ignored.
+- Group and supergroup text messages are processed only when the text explicitly
+  mentions `@TELEGRAM_BOT_USERNAME`; the mention is stripped before parser input.
+- Group and supergroup messages without the bot mention are acknowledged with
+  HTTP 200 and ignored without a reply.
 
 ## Manual Smoke Test
 

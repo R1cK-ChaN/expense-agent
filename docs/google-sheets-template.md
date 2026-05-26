@@ -7,7 +7,7 @@ The canonical worksheet name is `Transactions`.
 The first row must contain these headers in this exact order:
 
 ```text
-id,date,amount,currency,type,category,merchant,payment_method,note,telegram_user_id,telegram_message_id,created_at,updated_at
+id,date,amount,currency,type,category,merchant,payment_method,note,telegram_user_id,telegram_username,telegram_user_display_name,telegram_chat_id,telegram_message_id,created_at,updated_at
 ```
 
 The versioned code contract for this template lives in `integrations/google_sheets/schema.py`. Repository code should import the sheet name and header constants from that module instead of duplicating column names.
@@ -24,11 +24,14 @@ Column meanings:
 - `payment_method`: user-provided payment method when known.
 - `note`: user-visible description or extra details.
 - `telegram_user_id`: source Telegram user identifier.
+- `telegram_username`: source Telegram username when available.
+- `telegram_user_display_name`: display name derived from Telegram first/last name when available.
+- `telegram_chat_id`: source Telegram chat identifier.
 - `telegram_message_id`: source Telegram message identifier.
-- `created_at`: backend creation timestamp.
-- `updated_at`: backend update timestamp.
+- `created_at`: backend creation timestamp in the configured timezone.
+- `updated_at`: backend update timestamp in the configured timezone.
 
-The MVP sheet contract stores the Telegram user/message pair for duplicate detection. Additional Telegram chat or update metadata requires a future schema migration issue.
+The sheet contract stores the Telegram user/chat/message tuple for duplicate detection and preserves human-readable Telegram user metadata for audit.
 
 ## Manual Setup
 
@@ -42,6 +45,27 @@ The MVP sheet contract stores the Telegram user/message pair for duplicate detec
 8. Provide the service account JSON through `GOOGLE_SERVICE_ACCOUNT_JSON` using an environment variable or secret manager.
 
 Do not commit the service account JSON, downloaded credential files, or `.env` files containing secrets.
+
+## Existing Sheet Migration
+
+Sheets created before the Telegram metadata schema used this suffix:
+
+```text
+telegram_user_id,telegram_message_id,created_at,updated_at
+```
+
+Before deploying this version, update row 1 so the suffix is:
+
+```text
+telegram_user_id,telegram_username,telegram_user_display_name,telegram_chat_id,telegram_message_id,created_at,updated_at
+```
+
+Existing rows can leave `telegram_username` and `telegram_user_display_name`
+blank. For rows written by the prior private-only webhook, set
+`telegram_chat_id` to the same value as `telegram_user_id` so duplicate
+detection remains stable after migration. New writes populate all three
+metadata columns. The repository intentionally rejects the old header order so a
+partially migrated sheet fails before appending or updating rows.
 
 ## Validation
 

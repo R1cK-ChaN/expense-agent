@@ -20,6 +20,7 @@ def create_app(
     *,
     telegram_reply_client: TelegramReplyClient | None = None,
     telegram_webhook_secret: str | None = None,
+    telegram_bot_username: str | None = None,
     telegram_text_handler: TelegramTextHandler | None = None,
 ) -> FastAPI:
     settings = load_settings()
@@ -46,6 +47,11 @@ def create_app(
                 if telegram_webhook_secret is not None
                 else settings.telegram_webhook_secret
             ),
+            telegram_bot_username=(
+                telegram_bot_username
+                if telegram_bot_username is not None
+                else settings.telegram_bot_username
+            ),
             telegram_text_handler=telegram_text_handler,
         )
     )
@@ -69,6 +75,7 @@ def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler |
         repository=GoogleSheetsTransactionRepository(
             sheet_id=settings.google_sheet_id,
             sheets_client=sheets_client,
+            timezone=settings.default_timezone,
         ),
         timezone=settings.default_timezone,
         default_currency=settings.default_currency,

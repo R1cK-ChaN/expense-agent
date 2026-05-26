@@ -62,11 +62,13 @@ Does not own:
 - Business decisions about supported intents.
 
 The webhook adapter lives in `app/telegram_webhook.py` and exposes
-`POST /telegram/webhook`. It currently supports only private text messages,
-which are normalized into `TelegramInboundMessage` with Telegram user, chat,
-message, text, and received timestamp fields. Group messages are acknowledged
-and ignored for the MVP. Private non-text messages receive the fixed unsupported
-message reply. The route requires Telegram's
+`POST /telegram/webhook`. It supports private text messages and group or
+supergroup text messages that explicitly mention the configured bot username.
+Handled messages are normalized into `TelegramInboundMessage` with Telegram
+user, chat, message, text, user display metadata, and received timestamp fields.
+For groups, the bot mention is stripped before parser input. Group messages
+without the bot mention are acknowledged and ignored. Private non-text messages
+receive the fixed unsupported message reply. The route requires Telegram's
 `X-Telegram-Bot-Api-Secret-Token` header to match the configured webhook secret
 before any update processing or reply sending occurs.
 
@@ -93,8 +95,9 @@ Does not own:
 
 Create-expense orchestration lives in `core/transaction_service.py`. The
 service accepts normalized Telegram message metadata, checks the repository for
-an existing `telegram_user_id` and `telegram_message_id` before parsing, sends
-the raw text to the parser, validates create-expense output, appends one
+an existing `telegram_user_id`, `telegram_chat_id`, and `telegram_message_id`
+before parsing, sends the normalized text to the parser, validates
+create-expense output, appends one
 transaction row, and returns the reply text for the Telegram adapter to send.
 Low-confidence create-expense parser results produce a clarification reply and
 do not write to storage.
@@ -217,6 +220,10 @@ Required configuration:
 - Google Sheet identifier and worksheet name.
 - Default timezone.
 - Default currency.
+
+Optional configuration:
+
+- Telegram bot username for group/supergroup mention handling.
 
 Secrets must come from environment variables or a secret manager. They must not be committed to the repository.
 
