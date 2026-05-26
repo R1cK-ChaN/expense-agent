@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 class TelegramMessage(Protocol):
     telegram_user_id: str
+    telegram_username: str | None
+    telegram_user_display_name: str | None
+    chat_id: str
     message_id: str
     message_text: str
     received_at: datetime
@@ -57,6 +60,7 @@ class TransactionRepository(Protocol):
         self,
         *,
         user_id: str,
+        chat_id: str,
         message_id: str,
     ) -> TransactionRecord | None:
         raise NotImplementedError
@@ -130,7 +134,7 @@ class TransactionService:
         self._update_validator = update_validator
         self._clock = clock or _utc_now
         self._id_factory = id_factory or _default_transaction_id
-        self._update_targets_by_message: dict[tuple[str, str], str] = {}
+        self._update_targets_by_message: dict[tuple[str, str, str], str] = {}
 
     def __call__(self, message: TelegramMessage) -> str:
         return self.handle_telegram_message(message)
@@ -139,6 +143,7 @@ class TransactionService:
         try:
             existing_record = self._repository.find_by_telegram_message(
                 user_id=message.telegram_user_id,
+                chat_id=message.chat_id,
                 message_id=message.message_id,
             )
         except TransactionRepositoryError:
@@ -226,7 +231,11 @@ class TransactionService:
         if not validation.is_valid:
             return validation.user_message or UNKNOWN_INTENT_MESSAGE
 
-        update_message_key = (message.telegram_user_id, message.message_id)
+        update_message_key = (
+            message.telegram_user_id,
+            message.chat_id,
+            message.message_id,
+        )
         transaction_id = self._update_targets_by_message.get(update_message_key)
         if transaction_id is None:
             try:
@@ -291,7 +300,7 @@ class TransactionService:
         *,
         message: TelegramMessage,
     ) -> TransactionRecord:
-        timestamp = _format_timestamp(self._clock())
+        timestamp = _format_timestamp(self._clock(), self._timezone)
         return TransactionRecord(
             id=self._id_factory(),
             date=expense.date,
@@ -303,6 +312,9 @@ class TransactionService:
             payment_method=expense.payment_method,
             note=expense.note,
             telegram_user_id=message.telegram_user_id,
+            telegram_username=message.telegram_username,
+            telegram_user_display_name=message.telegram_user_display_name,
+            telegram_chat_id=message.chat_id,
             telegram_message_id=message.message_id,
             created_at=timestamp,
             updated_at=timestamp,
@@ -354,10 +366,10 @@ def _normalize_currency(currency: str) -> str:
     return currency.strip().upper()
 
 
-def _format_timestamp(timestamp: datetime) -> str:
+def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc).isoformat()
+        timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
+    return timestamp.astimezone(ZoneInfo(timezone_name)).isoformat()
 
 
 def _utc_now() -> datetime:

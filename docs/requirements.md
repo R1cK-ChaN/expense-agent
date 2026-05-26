@@ -21,6 +21,7 @@ Examples:
 
 Expected behavior:
 
+- Private text messages are supported directly; group and supergroup messages are supported only when they explicitly mention the bot username.
 - The bot extracts amount, currency, description, category, and transaction date when present.
 - The bot applies configured defaults for missing optional fields.
 - The bot validates required fields before writing to storage.
@@ -74,6 +75,7 @@ Expected behavior:
 - Default currency: configured user currency, initially `SGD`.
 - Default transaction date: the Telegram message date in the configured timezone.
 - Default category: `未分类` when a valid expense is clear but no supported category is confidently present.
+- Generated storage timestamps use the configured timezone and include an explicit offset.
 
 ## Supported Categories
 

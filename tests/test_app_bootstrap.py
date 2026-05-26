@@ -71,7 +71,7 @@ def test_configured_app_wires_transaction_service(monkeypatch):
             "reply_to_message_id": "9001",
         }
     ]
-    assert sheets_client.rows[1][1:11] == [
+    assert sheets_client.rows[1][1:14] == [
         "2026-05-20",
         "12.5",
         "SGD",
@@ -81,8 +81,13 @@ def test_configured_app_wires_transaction_service(monkeypatch):
         "",
         "午饭",
         "42",
+        "",
+        "Ada",
+        "12345",
         "9001",
     ]
+    assert sheets_client.rows[1][14] == sheets_client.rows[1][15]
+    assert sheets_client.rows[1][14].endswith("+08:00")
 
 
 class FakeLLMClient:

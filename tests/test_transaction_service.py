@@ -54,7 +54,7 @@ def test_create_expense_appends_transaction_and_confirms_saved_summary():
             ),
         )
     ]
-    assert repository.find_calls == [("42", "9001")]
+    assert repository.find_calls == [("42", "12345", "9001")]
     assert repository.appended_records == [
         make_record(
             transaction_id="txn-1",
@@ -63,6 +63,12 @@ def test_create_expense_appends_transaction_and_confirms_saved_summary():
             note="午饭",
         )
     ]
+    saved_record = repository.appended_records[0]
+    assert saved_record.telegram_username == "ada"
+    assert saved_record.telegram_user_display_name == "Ada Lovelace"
+    assert saved_record.telegram_chat_id == "12345"
+    assert saved_record.created_at == "2026-05-20T13:00:00+08:00"
+    assert saved_record.updated_at == "2026-05-20T13:00:00+08:00"
 
 
 def test_create_expense_defaults_missing_date_and_currency_before_append():
@@ -503,15 +509,20 @@ def make_message(
     *,
     text: str,
     telegram_user_id: str = "42",
+    telegram_username: str | None = "ada",
+    telegram_user_display_name: str | None = "Ada Lovelace",
+    chat_id: str = "12345",
     message_id: str = "9001",
     received_at: datetime = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
 ) -> TelegramInboundMessage:
     return TelegramInboundMessage(
         telegram_user_id=telegram_user_id,
-        chat_id="12345",
+        chat_id=chat_id,
         message_id=message_id,
         message_text=text,
         received_at=received_at,
+        telegram_username=telegram_username,
+        telegram_user_display_name=telegram_user_display_name,
     )
 
 
@@ -606,9 +617,12 @@ def make_record(
     payment_method: str | None = None,
     note: str | None = None,
     telegram_user_id: str = "42",
+    telegram_username: str | None = "ada",
+    telegram_user_display_name: str | None = "Ada Lovelace",
+    telegram_chat_id: str = "12345",
     telegram_message_id: str = "9001",
-    created_at: str = "2026-05-20T05:00:00+00:00",
-    updated_at: str = "2026-05-20T05:00:00+00:00",
+    created_at: str = "2026-05-20T13:00:00+08:00",
+    updated_at: str = "2026-05-20T13:00:00+08:00",
 ) -> TransactionRecord:
     return TransactionRecord(
         id=transaction_id,
@@ -621,6 +635,9 @@ def make_record(
         payment_method=payment_method,
         note=note,
         telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        telegram_user_display_name=telegram_user_display_name,
+        telegram_chat_id=telegram_chat_id,
         telegram_message_id=telegram_message_id,
         created_at=created_at,
         updated_at=updated_at,
@@ -657,7 +674,7 @@ class FakeTransactionRepository:
         self._fail_append = fail_append
         self._fail_update = fail_update
         self._fail_sum_monthly = fail_sum_monthly
-        self.find_calls: list[tuple[str, str]] = []
+        self.find_calls: list[tuple[str, str, str]] = []
         self.latest_calls: list[str] = []
         self.appended_records: list[TransactionRecord] = []
         self.update_calls: list[tuple[str, dict[str, object]]] = []
@@ -672,9 +689,10 @@ class FakeTransactionRepository:
         self,
         *,
         user_id: str,
+        chat_id: str,
         message_id: str,
     ) -> TransactionRecord | None:
-        self.find_calls.append((user_id, message_id))
+        self.find_calls.append((user_id, chat_id, message_id))
         return self._existing_record
 
     def append_transaction(self, record: TransactionRecord) -> TransactionRecord:
@@ -704,7 +722,7 @@ class FakeTransactionRepository:
         updated_values = {
             **latest_record.__dict__,
             **fields,
-            "updated_at": "2026-05-20T05:00:00+00:00",
+            "updated_at": "2026-05-20T13:00:00+08:00",
         }
         updated_record = TransactionRecord(**updated_values)
         self._records_by_id[transaction_id] = updated_record

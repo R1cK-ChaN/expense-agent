@@ -27,7 +27,7 @@ def test_append_transaction_writes_canonical_row_order():
     assert sheets_client.append_calls == [
         (
             "sheet-1",
-            "Transactions!A:M",
+            "Transactions!A:P",
             [
                 [
                     "txn-1",
@@ -40,6 +40,9 @@ def test_append_transaction_writes_canonical_row_order():
                     "card",
                     "lunch",
                     "42",
+                    "ada",
+                    "Ada Lovelace",
+                    "12345",
                     "9001",
                     "2026-05-19T10:00:00+00:00",
                     "2026-05-19T10:00:00+00:00",
@@ -87,6 +90,7 @@ def test_find_by_telegram_message_returns_existing_transaction():
 
     record = repository.find_by_telegram_message(
         user_id="42",
+        chat_id="12345",
         message_id="9001",
     )
 
@@ -110,9 +114,44 @@ def test_find_by_telegram_message_returns_none_when_missing():
     )
 
     assert (
-        repository.find_by_telegram_message(user_id="42", message_id="9002")
+        repository.find_by_telegram_message(
+            user_id="42",
+            chat_id="12345",
+            message_id="9002",
+        )
         is None
     )
+
+
+def test_find_by_telegram_message_matches_chat_id_for_idempotency():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            make_row(
+                transaction_id="private-message",
+                telegram_chat_id="12345",
+                telegram_message_id="9001",
+            ),
+            make_row(
+                transaction_id="group-message",
+                telegram_chat_id="-100123",
+                telegram_message_id="9001",
+            ),
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    record = repository.find_by_telegram_message(
+        user_id="42",
+        chat_id="-100123",
+        message_id="9001",
+    )
+
+    assert record is not None
+    assert record.id == "group-message"
 
 
 def test_get_latest_transaction_returns_newest_user_expense_by_created_at():
@@ -184,11 +223,11 @@ def test_update_transaction_changes_allowed_fields_and_refreshes_updated_at():
     assert record.note == "corrected lunch"
     assert record.telegram_user_id == "42"
     assert record.created_at == "2026-05-19T10:00:00+00:00"
-    assert record.updated_at == "2026-05-20T12:30:00+00:00"
+    assert record.updated_at == "2026-05-20T20:30:00+08:00"
     assert sheets_client.update_calls == [
         (
             "sheet-1",
-            "Transactions!A2:M2",
+            "Transactions!A2:P2",
             [
                 [
                     "txn-1",
@@ -201,9 +240,12 @@ def test_update_transaction_changes_allowed_fields_and_refreshes_updated_at():
                     "card",
                     "corrected lunch",
                     "42",
+                    "ada",
+                    "Ada Lovelace",
+                    "12345",
                     "9001",
                     "2026-05-19T10:00:00+00:00",
-                    "2026-05-20T12:30:00+00:00",
+                    "2026-05-20T20:30:00+08:00",
                 ]
             ],
         )
@@ -325,6 +367,9 @@ def test_repository_rejects_invalid_sheet_headers_before_reading_rows():
                 "payment_method",
                 "note",
                 "telegram_user_id",
+                "telegram_username",
+                "telegram_user_display_name",
+                "telegram_chat_id",
                 "telegram_message_id",
                 "created_at",
                 "updated_at",
@@ -337,7 +382,45 @@ def test_repository_rejects_invalid_sheet_headers_before_reading_rows():
     )
 
     with pytest.raises(TransactionSheetSchemaError):
-        repository.find_by_telegram_message(user_id="42", message_id="9001")
+        repository.find_by_telegram_message(
+            user_id="42",
+            chat_id="12345",
+            message_id="9001",
+        )
+
+
+def test_repository_rejects_old_width_rows_after_header_migration():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            [
+                "txn-1",
+                "2026-05-19",
+                "12.30",
+                "SGD",
+                "expense",
+                "餐饮",
+                "coffee shop",
+                "card",
+                "lunch",
+                "42",
+                "9001",
+                "2026-05-19T10:00:00+00:00",
+                "2026-05-19T10:00:00+00:00",
+            ],
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    with pytest.raises(TransactionSheetSchemaError):
+        repository.find_by_telegram_message(
+            user_id="42",
+            chat_id="12345",
+            message_id="9001",
+        )
 
 
 @pytest.mark.parametrize(
@@ -346,6 +429,7 @@ def test_repository_rejects_invalid_sheet_headers_before_reading_rows():
         lambda repository: repository.append_transaction(make_record()),
         lambda repository: repository.find_by_telegram_message(
             user_id="42",
+            chat_id="12345",
             message_id="9001",
         ),
         lambda repository: repository.get_latest_transaction(user_id="42"),
@@ -380,23 +464,23 @@ def test_google_sheets_values_client_wraps_google_values_api():
     )
     client = GoogleSheetsValuesClient(service)
 
-    assert client.get_values("sheet-1", "Transactions!A:M") == [["id"]]
-    client.append_values("sheet-1", "Transactions!A:M", [["txn-1"]])
-    client.update_values("sheet-1", "Transactions!A2:M2", [["txn-1"]])
+    assert client.get_values("sheet-1", "Transactions!A:P") == [["id"]]
+    client.append_values("sheet-1", "Transactions!A:P", [["txn-1"]])
+    client.update_values("sheet-1", "Transactions!A2:P2", [["txn-1"]])
 
     assert service.calls == [
         (
             "get",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A:M",
+                "range": "Transactions!A:P",
             },
         ),
         (
             "append",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A:M",
+                "range": "Transactions!A:P",
                 "valueInputOption": "RAW",
                 "insertDataOption": "INSERT_ROWS",
                 "body": {"values": [["txn-1"]]},
@@ -406,7 +490,7 @@ def test_google_sheets_values_client_wraps_google_values_api():
             "update",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A2:M2",
+                "range": "Transactions!A2:P2",
                 "valueInputOption": "RAW",
                 "body": {"values": [["txn-1"]]},
             },
@@ -426,6 +510,9 @@ def make_record(
     payment_method: str | None = "card",
     note: str | None = "lunch",
     telegram_user_id: str = "42",
+    telegram_username: str | None = "ada",
+    telegram_user_display_name: str | None = "Ada Lovelace",
+    telegram_chat_id: str = "12345",
     telegram_message_id: str = "9001",
     created_at: str = "2026-05-19T10:00:00+00:00",
     updated_at: str = "2026-05-19T10:00:00+00:00",
@@ -441,6 +528,9 @@ def make_record(
         payment_method=payment_method,
         note=note,
         telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        telegram_user_display_name=telegram_user_display_name,
+        telegram_chat_id=telegram_chat_id,
         telegram_message_id=telegram_message_id,
         created_at=created_at,
         updated_at=updated_at,
@@ -459,6 +549,9 @@ def make_row(
     payment_method: str = "card",
     note: str = "lunch",
     telegram_user_id: str = "42",
+    telegram_username: str = "ada",
+    telegram_user_display_name: str = "Ada Lovelace",
+    telegram_chat_id: str = "12345",
     telegram_message_id: str = "9001",
     created_at: str = "2026-05-19T10:00:00+00:00",
     updated_at: str = "2026-05-19T10:00:00+00:00",
@@ -474,6 +567,9 @@ def make_row(
         payment_method,
         note,
         telegram_user_id,
+        telegram_username,
+        telegram_user_display_name,
+        telegram_chat_id,
         telegram_message_id,
         created_at,
         updated_at,

@@ -21,14 +21,17 @@ Optional fields:
 
 - `username`: Telegram username when available.
 - `first_name`: Telegram first name when available.
+- `last_name`: Telegram last name when available.
+- `display_name`: display name derived from first and last name when available.
 - `reply_to_message_id`: message being replied to when available.
 - `locale`: user or deployment locale when available.
 
 Invariants:
 
 - `update_id`, `message_id`, `chat_id`, and `user_id` must be preserved exactly as received from Telegram.
-- `message_text` must not be mutated before parser input; normalization belongs in parser or domain logic.
-- A transaction created from Telegram must retain enough metadata to detect duplicate processing of the same Telegram message.
+- Private `message_text` is handed to the parser unchanged.
+- Group and supergroup `message_text` is handed to the parser only after the explicit bot mention is stripped by the Telegram adapter.
+- A transaction created from Telegram must retain enough metadata to detect duplicate processing of the same Telegram user/chat/message tuple.
 
 ## Transaction
 
@@ -43,6 +46,7 @@ Required fields:
 - `type`: transaction type, initially `expense`.
 - `category`: one supported normalized category.
 - `telegram_user_id`: source Telegram user identifier.
+- `telegram_chat_id`: source Telegram chat identifier.
 - `telegram_message_id`: source Telegram message identifier.
 - `created_at`: backend creation timestamp in ISO 8601 format.
 - `updated_at`: backend update timestamp in ISO 8601 format.
@@ -52,6 +56,8 @@ Optional fields:
 - `merchant`: merchant or place when confidently available.
 - `payment_method`: card, wallet, cash, or other user-provided payment method when available.
 - `note`: short human-readable description or extra details from the user.
+- `telegram_username`: Telegram username when available.
+- `telegram_user_display_name`: Telegram display name derived from first and last name when available.
 
 Invariants:
 
@@ -63,7 +69,8 @@ Invariants:
 - `id` must not change after creation.
 - `created_at` must not change after creation.
 - `updated_at` must change when a stored transaction is updated.
-- A Telegram user/message pair can create at most one transaction unless future requirements explicitly support multi-expense messages or multi-chat scoping.
+- Generated `created_at` and `updated_at` timestamps use the configured timezone and include an explicit offset, initially `Asia/Singapore` / `+08:00`.
+- A Telegram user/chat/message tuple can create at most one transaction unless future requirements explicitly support multi-expense messages.
 
 Create-expense validation returns a normalized transaction candidate before any
 repository write is allowed:
@@ -145,7 +152,7 @@ Invariants:
   message reuse the transaction target chosen for the first successful update.
 - Every changed field must satisfy the relevant transaction validation rules
   before storage is mutated.
-- Updates must preserve the original `telegram_user_id`, `telegram_message_id`, and `created_at`.
+- Updates must preserve the original `telegram_user_id`, `telegram_chat_id`, `telegram_message_id`, user display metadata, and `created_at`.
 
 ## Query Request
 
@@ -207,6 +214,9 @@ The Google Sheet should store one transaction per row with stable column names:
 - `payment_method`
 - `note`
 - `telegram_user_id`
+- `telegram_username`
+- `telegram_user_display_name`
+- `telegram_chat_id`
 - `telegram_message_id`
 - `created_at`
 - `updated_at`

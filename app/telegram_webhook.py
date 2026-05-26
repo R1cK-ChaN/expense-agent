@@ -1,4 +1,5 @@
 import hmac
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ class TelegramInboundMessage:
     message_id: str
     message_text: str
     received_at: datetime
+    telegram_username: str | None = None
+    telegram_user_display_name: str | None = None
 
 
 class TelegramReplyClient(Protocol):
@@ -42,6 +45,7 @@ def create_telegram_webhook_router(
     *,
     telegram_reply_client: TelegramReplyClient | None,
     telegram_webhook_secret: str | None,
+    telegram_bot_username: str | None = None,
     telegram_text_handler: TelegramTextHandler | None = None,
 ) -> APIRouter:
     router = APIRouter()
@@ -65,7 +69,10 @@ def create_telegram_webhook_router(
         if chat is None:
             return _ignored_response("invalid_message")
 
-        if _string_value(chat.get("type")) != "private":
+        chat_type = _string_value(chat.get("type"))
+        if chat_type is None:
+            return _ignored_response("invalid_message")
+        if chat_type not in {"private", "group", "supergroup"}:
             return _ignored_response("unsupported_chat_type")
 
         chat_id = _string_value(chat.get("id"))
@@ -75,6 +82,8 @@ def create_telegram_webhook_router(
 
         text = message.get("text")
         if not isinstance(text, str) or text == "":
+            if chat_type in {"group", "supergroup"}:
+                return _ignored_response("unsupported_message_type")
             _send_reply(
                 telegram_reply_client,
                 chat_id=chat_id,
@@ -87,7 +96,21 @@ def create_telegram_webhook_router(
                 "reason": "unsupported_message_type",
             }
 
-        inbound_message = _inbound_message_from_telegram(message, chat_id, message_id)
+        message_text = text
+        if chat_type in {"group", "supergroup"}:
+            stripped_text = _strip_bot_mention(text, telegram_bot_username)
+            if stripped_text is None:
+                return _ignored_response("bot_not_mentioned")
+            if stripped_text == "":
+                return _ignored_response("empty_message_after_mention")
+            message_text = stripped_text
+
+        inbound_message = _inbound_message_from_telegram(
+            message,
+            chat_id,
+            message_id,
+            message_text,
+        )
         if inbound_message is None:
             return _ignored_response("invalid_message")
 
@@ -131,23 +154,25 @@ def _inbound_message_from_telegram(
     message: Mapping[str, Any],
     chat_id: str,
     message_id: str,
+    message_text: str,
 ) -> TelegramInboundMessage | None:
     from_user = _mapping_value(message.get("from"))
-    text = message.get("text")
     telegram_user_id = (
         _string_value(from_user.get("id")) if from_user is not None else None
     )
     received_at = _telegram_timestamp(message.get("date"))
 
-    if telegram_user_id is None or received_at is None or not isinstance(text, str):
+    if telegram_user_id is None or received_at is None:
         return None
 
     return TelegramInboundMessage(
         telegram_user_id=telegram_user_id,
         chat_id=chat_id,
         message_id=message_id,
-        message_text=text,
+        message_text=message_text,
         received_at=received_at,
+        telegram_username=_optional_string_value(from_user.get("username")),
+        telegram_user_display_name=_telegram_user_display_name(from_user),
     )
 
 
@@ -198,6 +223,48 @@ def _string_value(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_string_value(value: object) -> str | None:
+    if value is None:
+        return None
+    string_value = str(value)
+    return string_value or None
+
+
+def _telegram_user_display_name(from_user: Mapping[str, Any]) -> str | None:
+    name_parts = [
+        part
+        for part in (
+            _optional_string_value(from_user.get("first_name")),
+            _optional_string_value(from_user.get("last_name")),
+        )
+        if part is not None
+    ]
+    if not name_parts:
+        return None
+    return " ".join(name_parts)
+
+
+def _strip_bot_mention(text: str, bot_username: str | None) -> str | None:
+    username = _normalize_bot_username(bot_username)
+    if username is None:
+        return None
+
+    mention_pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])@{re.escape(username)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    if mention_pattern.search(text) is None:
+        return None
+    return " ".join(mention_pattern.sub(" ", text).split())
+
+
+def _normalize_bot_username(bot_username: str | None) -> str | None:
+    if bot_username is None:
+        return None
+    username = bot_username.strip().removeprefix("@")
+    return username or None
 
 
 def _telegram_timestamp(value: object) -> datetime | None:
