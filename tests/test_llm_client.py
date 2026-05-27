@@ -47,6 +47,74 @@ def test_openai_compatible_client_requests_json_chat_completion():
     ]
 
 
+def test_openai_compatible_client_uses_minimal_reasoning_for_gpt_5_nano():
+    transport = FakeJsonTransport(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"intent": "unknown"}',
+                    }
+                }
+            ]
+        }
+    )
+    client = OpenAICompatibleLLMClient(
+        api_key="parser-secret",
+        model="gpt-5-nano",
+        transport=transport,
+    )
+
+    response = client.complete_json(
+        system_prompt="system instructions",
+        user_prompt="user message",
+    )
+
+    assert response == '{"intent": "unknown"}'
+    payload = transport.requests[0][2]
+    assert "temperature" not in payload
+    assert payload["reasoning_effort"] == "minimal"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-5.5-2026-04-23",
+        "o4-mini",
+        "chat-latest",
+    ],
+)
+def test_openai_compatible_client_omits_temperature_for_default_temperature_models(
+    model: str,
+):
+    transport = FakeJsonTransport(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"intent": "unknown"}',
+                    }
+                }
+            ]
+        }
+    )
+    client = OpenAICompatibleLLMClient(
+        api_key="parser-secret",
+        model=model,
+        transport=transport,
+    )
+
+    response = client.complete_json(
+        system_prompt="system instructions",
+        user_prompt="user message",
+    )
+
+    assert response == '{"intent": "unknown"}'
+    payload = transport.requests[0][2]
+    assert "temperature" not in payload
+    assert "reasoning_effort" not in payload
+
+
 def test_openai_compatible_client_maps_bad_provider_response_to_error():
     client = OpenAICompatibleLLMClient(
         api_key="parser-secret",

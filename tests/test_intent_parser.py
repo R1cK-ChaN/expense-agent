@@ -51,6 +51,9 @@ def test_parser_extracts_create_expense_with_defaults_and_no_missing_fields():
     assert "DEFAULT_CURRENCY: SGD" in llm_client.calls[0].user_prompt
     assert "TODAY: 2026-05-20" in llm_client.calls[0].user_prompt
     assert "午饭 12.5 麦当劳" in llm_client.calls[0].user_prompt
+    assert "Do not copy the schema example confidence value" in (
+        llm_client.calls[0].system_prompt
+    )
 
 
 def test_parser_prompt_guides_haircut_to_personal_care_category():
@@ -79,6 +82,10 @@ def test_parser_prompt_guides_haircut_to_personal_care_category():
     assert "个人护理" in SUPPORTED_CATEGORIES
     assert "剪头发" in llm_client.calls[0].system_prompt
     assert "白鸡饭" in llm_client.calls[0].system_prompt
+    assert "Only include date when" in llm_client.calls[0].system_prompt
+    assert "never the full correction sentence" in (
+        llm_client.calls[0].system_prompt
+    )
     assert result.is_success is True
     assert result.expense is not None
     assert result.expense.category == "个人护理"

@@ -135,15 +135,23 @@ Category guidance:
 {CATEGORY_GUIDANCE_TEXT}
 
 Return these top-level keys exactly. Use null for non-applicable expense/query
-blocks:
+blocks. Do not copy the schema example confidence value; choose confidence
+from the rules below:
 {{
   "intent": "create_expense | update_recent_expense | query_monthly_total | unknown",
-  "confidence": 0.0,
+  "confidence": 0.9,
   "expense": null,
   "update_fields": {{}},
   "query": null,
   "missing_fields": []
 }}
+
+Confidence rules:
+- Use 0.85 to 1.0 when the intent and required fields are clear, including
+  fields resolved from TODAY, TIMEZONE, or DEFAULT_CURRENCY.
+- Use 0.7 to 0.84 when the intent is likely but one non-required detail is
+  uncertain.
+- Use below 0.7 only when the user text is ambiguous or unsupported.
 
 For create_expense, expense must be:
 {{
@@ -161,9 +169,12 @@ When a descriptive correction clearly changes the category, include both the
 descriptive field and category. For example, changing an item to 白鸡饭 should
 include category 餐饮 and note 白鸡饭.
 For descriptive corrections such as changing the food/item, use note when no
-specific merchant or place is named. Keep note concise; remove correction
-phrasing such as "改一下", "不是", "没有", or "我吃了" when the actual item is
-clear.
+specific merchant or place is named. For food/item corrections, note should be
+only the new item name, never the full correction sentence. Keep note concise;
+remove correction phrasing such as "改一下", "不是", "没有", or "我吃了" when
+the actual item is clear. Only include date when the user explicitly changes
+the date; do not copy TODAY into update_fields just because it is present in
+context.
 For query_monthly_total, query must be:
 {{"month": "YYYY-MM", "currency": "currency code or null"}}
 
