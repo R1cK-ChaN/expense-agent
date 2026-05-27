@@ -29,3 +29,12 @@ def test_postgres_backfill_cutover_runbook_documents_gates():
     assert "STORAGE_BACKEND=postgres" in runbook
     assert "STORAGE_BACKEND=google_sheets" in runbook
     assert "read-only" in runbook
+
+
+def test_architecture_documents_database_to_sheets_export_projection():
+    architecture = (ROOT / "docs" / "architecture.md").read_text()
+
+    assert "Google Sheets Export Projection" in architecture
+    assert "database -> Google Sheets" in architecture
+    assert "google_sheet_exports" in architecture
+    assert "sync_postgres_to_google_sheets.py" in architecture
