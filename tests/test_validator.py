@@ -169,6 +169,17 @@ def test_validation_normalizes_safe_create_expense_fields():
     assert result.expense.note == "午饭"
 
 
+def test_validation_accepts_personal_care_category():
+    result = validate_create_expense(
+        make_parser_result(category="个人护理", note="剪头发"),
+        context=make_context(),
+    )
+
+    assert result.is_valid is True
+    assert result.expense is not None
+    assert result.expense.category == "个人护理"
+
+
 def test_update_validation_accepts_issue_9_supported_fields():
     result = validate_update_recent_expense(
         make_update_parser_result(
@@ -194,7 +205,18 @@ def test_update_validation_accepts_issue_9_supported_fields():
     }
 
 
-def test_update_validation_rejects_unsupported_fields_without_partial_update():
+def test_update_validation_accepts_note_updates():
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"note": "白鸡饭"}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is True
+    assert result.errors == ()
+    assert result.update_fields == {"note": "白鸡饭"}
+
+
+def test_update_validation_ignores_unsupported_fields_when_safe_fields_exist():
     result = validate_update_recent_expense(
         make_update_parser_result(
             update_fields={
@@ -202,6 +224,17 @@ def test_update_validation_rejects_unsupported_fields_without_partial_update():
                 "currency": "USD",
             }
         ),
+        context=make_context(),
+    )
+
+    assert result.is_valid is True
+    assert result.errors == ()
+    assert result.update_fields == {"amount": Decimal("18.60")}
+
+
+def test_update_validation_rejects_unsupported_fields_when_no_safe_fields_exist():
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"currency": "USD"}),
         context=make_context(),
     )
 

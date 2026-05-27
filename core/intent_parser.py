@@ -1,13 +1,14 @@
 import json
 import math
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Protocol
 
-from core.categories import SUPPORTED_CATEGORIES
+from core.categories import CATEGORY_GUIDANCE, SUPPORTED_CATEGORIES
 
 REQUIRED_TOP_LEVEL_KEYS = frozenset(
     {
@@ -33,6 +34,21 @@ REQUIRED_EXPENSE_KEYS = frozenset(
 )
 
 KNOWN_UPDATE_FIELDS = REQUIRED_EXPENSE_KEYS | {"type"}
+_AMOUNT_PATTERN = re.compile(r"(?<![\d:/年月日-])\d+(?:\.\d+)?(?![\d:/年月日-])")
+_AMOUNT_CUES = (
+    "amount",
+    "cost",
+    "paid",
+    "spent",
+    "total",
+    "价钱",
+    "价格",
+    "付款",
+    "付了",
+    "花费",
+    "花了",
+    "金额",
+)
 
 
 class ParserIntent(StrEnum):
@@ -97,6 +113,10 @@ class IntentParserResult:
         )
 
 
+CATEGORY_GUIDANCE_TEXT = "\n".join(
+    f"- {category}: {description}" for category, description in CATEGORY_GUIDANCE
+)
+
 SYSTEM_PROMPT = f"""
 You are a parser-only component for a Telegram expense tracking backend.
 Return JSON only. Do not call tools, write to storage, send messages, or decide
@@ -111,16 +131,27 @@ Supported intents:
 Supported categories:
 {", ".join(SUPPORTED_CATEGORIES)}
 
+Category guidance:
+{CATEGORY_GUIDANCE_TEXT}
+
 Return these top-level keys exactly. Use null for non-applicable expense/query
-blocks:
+blocks. Do not copy the schema example confidence value; choose confidence
+from the rules below:
 {{
   "intent": "create_expense | update_recent_expense | query_monthly_total | unknown",
-  "confidence": 0.0,
+  "confidence": 0.9,
   "expense": null,
   "update_fields": {{}},
   "query": null,
   "missing_fields": []
 }}
+
+Confidence rules:
+- Use 0.85 to 1.0 when the intent and required fields are clear, including
+  fields resolved from TODAY, TIMEZONE, or DEFAULT_CURRENCY.
+- Use 0.7 to 0.84 when the intent is likely but one non-required detail is
+  uncertain.
+- Use below 0.7 only when the user text is ambiguous or unsupported.
 
 For create_expense, expense must be:
 {{
@@ -134,12 +165,24 @@ For create_expense, expense must be:
 }}
 
 For update_recent_expense, update_fields must contain only fields being changed.
+When a descriptive correction clearly changes the category, include both the
+descriptive field and category. For example, changing an item to 白鸡饭 should
+include category 餐饮 and note 白鸡饭.
+For descriptive corrections such as changing the food/item, use note when no
+specific merchant or place is named. For food/item corrections, note should be
+only the new item name, never the full correction sentence. Keep note concise;
+remove correction phrasing such as "改一下", "不是", "没有", or "我吃了" when
+the actual item is clear. Only include date when the user explicitly changes
+the date; do not copy TODAY into update_fields just because it is present in
+context.
 For query_monthly_total, query must be:
 {{"month": "YYYY-MM", "currency": "currency code or null"}}
 
 Use the provided TODAY, TIMEZONE, and DEFAULT_CURRENCY context to resolve
 relative dates and omitted currencies. If a create_expense amount is missing,
 leave expense.amount null and include "amount" in missing_fields.
+Choose the closest supported category. Use 未分类 only when the category cannot
+be inferred from the text.
 """.strip()
 
 
@@ -158,7 +201,10 @@ class IntentParser:
 
         try:
             payload = json.loads(raw_response)
-            return _parse_payload(payload)
+            return _backfill_unambiguous_update_amount(
+                text,
+                _parse_payload(payload),
+            )
         except (TypeError, ValueError, json.JSONDecodeError):
             return IntentParserResult.failure("malformed_llm_output")
 
@@ -196,6 +242,56 @@ def _parse_payload(payload: object) -> IntentParserResult:
         query=_parse_query(payload["query"], intent),
         missing_fields=missing_fields,
     )
+
+
+def _backfill_unambiguous_update_amount(
+    text: str,
+    result: IntentParserResult,
+) -> IntentParserResult:
+    if (
+        result.intent is not ParserIntent.UPDATE_RECENT_EXPENSE
+        or "amount" in result.update_fields
+    ):
+        return result
+
+    amount = _unambiguous_amount_from_text(text)
+    if amount is None:
+        return result
+
+    return replace(
+        result,
+        update_fields={
+            "amount": amount,
+            **result.update_fields,
+        },
+    )
+
+
+def _unambiguous_amount_from_text(text: str) -> Decimal | None:
+    matches = list(_AMOUNT_PATTERN.finditer(text))
+    if len(matches) != 1:
+        return None
+
+    match = matches[0]
+    candidate = match.group()
+    if not _has_amount_cue(text, match.start(), match.end()):
+        return None
+
+    if "." not in candidate and len(candidate) > 5:
+        return None
+
+    try:
+        amount = Decimal(candidate)
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount <= 0:
+        return None
+    return amount
+
+
+def _has_amount_cue(text: str, start: int, end: int) -> bool:
+    window = text[max(0, start - 12) : min(len(text), end + 6)].lower()
+    return any(cue in window for cue in _AMOUNT_CUES)
 
 
 def _parse_intent(value: object) -> ParserIntent:

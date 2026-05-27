@@ -5,6 +5,7 @@ from urllib import error, request
 
 
 OPENAI_COMPATIBLE_API_BASE_URL = "https://api.openai.com/v1"
+MINIMAL_REASONING_EFFORT = "minimal"
 
 
 class LLMClientError(Exception):
@@ -49,8 +50,12 @@ class OpenAICompatibleLLMClient:
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0,
         }
+        if _uses_minimal_reasoning_effort(self._model):
+            payload["reasoning_effort"] = MINIMAL_REASONING_EFFORT
+        if not _requires_default_temperature(self._model):
+            payload["temperature"] = 0
+
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -104,6 +109,39 @@ class UrllibJsonTransport:
         if not isinstance(decoded_response, Mapping):
             raise LLMClientError("LLM provider returned invalid JSON.")
         return decoded_response
+
+
+def _uses_minimal_reasoning_effort(model: str) -> bool:
+    return (
+        model == "gpt-5"
+        or model.startswith("gpt-5-2025-")
+        or model == "gpt-5-mini"
+        or model.startswith("gpt-5-mini-")
+        or model == "gpt-5-nano"
+        or model.startswith("gpt-5-nano-")
+    )
+
+
+def _requires_default_temperature(model: str) -> bool:
+    return (
+        _uses_minimal_reasoning_effort(model)
+        or model == "chat-latest"
+        or model.endswith("-chat-latest")
+        or model == "gpt-5.5"
+        or model.startswith("gpt-5.5-")
+        or _is_o_series_model(model)
+    )
+
+
+def _is_o_series_model(model: str) -> bool:
+    return (
+        model == "o1"
+        or model.startswith("o1-")
+        or model == "o3"
+        or model.startswith("o3-")
+        or model == "o4-mini"
+        or model.startswith("o4-mini-")
+    )
 
 
 def _extract_message_content(response: Mapping[str, object]) -> str:

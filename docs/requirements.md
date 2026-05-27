@@ -46,11 +46,14 @@ Examples:
 - `change last lunch to 13.20`
 - `刚才那笔改成交通`
 - `把昨天咖啡改成餐饮`
+- `改一下，我吃了白鸡饭花了6.8`
 
 Expected behavior:
 
 - The backend resolves the target transaction before applying the update.
 - The bot does not update storage when the target transaction is missing or ambiguous.
+- The bot applies valid inferred changes such as amount, date, category, merchant, note, and payment method.
+- Extra parser fields that are not supported for updates do not block otherwise valid safe changes.
 - The bot replies with the updated transaction summary.
 
 ### Query Stored Spending
@@ -79,7 +82,7 @@ Expected behavior:
 
 ## Supported Categories
 
-The MVP category set is intentionally small and stable so parsing, storage, and reporting stay consistent:
+The MVP category set is curated and stable so parsing, storage, and reporting stay consistent:
 
 - `餐饮`
 - `交通`
@@ -91,10 +94,21 @@ The MVP category set is intentionally small and stable so parsing, storage, and 
 - `教育`
 - `办公`
 - `旅行`
+- `个人护理`
+- `生活服务`
+- `家庭`
+- `服饰`
+- `数码`
+- `健身`
+- `礼物`
+- `税费`
+- `保险`
+- `其他`
 - `未分类`
 
 Parser output must normalize synonyms into these values. For example, `mrt`,
-`taxi`, and `grab` map to `交通`; `doctor` and `medicine` map to `医疗`.
+`taxi`, and `grab` map to `交通`; `doctor` and `medicine` map to `医疗`;
+`剪头发` maps to `个人护理`.
 
 ## Out of Scope
 
@@ -128,6 +142,7 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 ### Updates
 
 - Given an update request identifies one stored transaction, when the requested field value is valid, then the existing transaction is updated instead of appending a new row.
+- Given an update request contains valid safe changes plus unsupported parser fields, when the bot handles it, then the safe changes are applied and unsupported fields are ignored.
 - Given an update request identifies no transaction, when the bot handles it, then no row is changed and the reply asks which transaction to update.
 - Given an update request matches multiple recent transactions, when the bot handles it, then no row is changed and the reply asks the user to clarify.
 
