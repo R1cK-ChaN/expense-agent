@@ -5,7 +5,11 @@ from app.telegram_webhook import (
     TelegramTextHandler,
     create_telegram_webhook_router,
 )
-from app.wechat_webhook import WeChatTextHandler, create_wechat_webhook_router
+from app.wechat_webhook import (
+    WeChatLocationHandler,
+    WeChatTextHandler,
+    create_wechat_webhook_router,
+)
 from config.settings import (
     STORAGE_BACKEND_GOOGLE_SHEETS,
     STORAGE_BACKEND_POSTGRES,
@@ -32,6 +36,7 @@ def create_app(
     telegram_text_handler: TelegramTextHandler | None = None,
     wechat_token: str | None = None,
     wechat_text_handler: WeChatTextHandler | None = None,
+    wechat_location_handler: WeChatLocationHandler | None = None,
 ) -> FastAPI:
     settings = load_settings()
     application = FastAPI(title="Expense Agent")
@@ -73,6 +78,7 @@ def create_app(
                 wechat_token if wechat_token is not None else settings.wechat_token
             ),
             wechat_text_handler=wechat_text_handler,
+            wechat_location_handler=wechat_location_handler,
         )
     )
 

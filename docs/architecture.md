@@ -92,8 +92,15 @@ and exposes `GET /wechat/webhook` for callback verification plus
 SHA-1 signature over the configured token, timestamp, and nonce before
 returning `echostr`. POST verifies the same signature, parses text XML
 messages, normalizes them into `InboundMessage`, and returns a passive text XML
-reply. Unsupported or malformed WeChat messages are acknowledged with
-`success` and are not handed to the application service.
+reply. Voice XML messages with WeChat `Recognition` are normalized through the
+same text-message path; the backend does not download audio or run ASR. Voice
+messages without recognition return a short clarification and do not call the
+parser. User-sent `location` messages and automatic `LOCATION` events are routed
+to an injectable location handler for latest-location persistence when available
+and are never sent to the expense parser or used to infer currency/category.
+`subscribe` events return a welcome message. Unsupported or malformed WeChat
+messages are acknowledged with `success` and are not handed to the application
+service.
 
 ### Application Service
 
@@ -365,7 +372,8 @@ Future implementation should keep these contracts independently testable:
 - Domain validation contract: parser result plus defaults to valid command or clarification.
 - Repository contract: transaction append, update, lookup, and query behavior.
 - Telegram adapter contract: Telegram update to source metadata and reply call.
-- WeChat adapter contract: callback verification, text XML normalization, and passive reply XML.
+- WeChat adapter contract: callback verification, text/voice XML normalization,
+  location/event no-parser routing, and passive reply XML.
 - Application service contract: orchestration across parser, validation, repository, and replies.
 
 The parser contract is covered with fake LLM client tests for create expense,
@@ -378,8 +386,9 @@ The Telegram webhook contract is covered with FastAPI request tests and a fake
 reply client. The Telegram Bot API client contract is covered with a fake JSON
 transport so the tested payload targets the originating `chat_id` without using
 real credentials. The WeChat webhook contract is covered with FastAPI request
-tests for signature verification, XML text-message normalization, and passive
-reply XML.
+tests for signature verification, XML text-message normalization, voice
+recognition routing, voice-recognition failure replies, location/event
+no-parser behavior, subscription replies, and passive reply XML.
 
 The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
