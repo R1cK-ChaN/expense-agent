@@ -456,6 +456,25 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
     ]
 
 
+def test_list_transactions_returns_all_non_empty_transaction_rows():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            make_row(transaction_id="txn-1", source_message_id="9001"),
+            [""] * len(transaction_header_row()),
+            make_row(transaction_id="txn-2", source_message_id="9002"),
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    records = repository.list_transactions()
+
+    assert [record.id for record in records] == ["txn-1", "txn-2"]
+
+
 def test_list_monthly_expenses_rejects_non_padded_month():
     repository = GoogleSheetsTransactionRepository(
         sheet_id="sheet-1",

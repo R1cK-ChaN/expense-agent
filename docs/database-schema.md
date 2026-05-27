@@ -311,14 +311,16 @@ Suggested migration path:
 
 1. Create one `users` row per unique `(source_platform, source_user_id)` pair.
 2. Create one `user_identities` row for each unique provider identity.
-3. Import each Google Sheets row into `transactions`.
-4. Leave `created_from_message_id` null for imported legacy rows if original raw
-   message records are not available.
-5. Create a `transaction_events` row with `event_type = 'created'` for each
-   imported transaction.
+3. Import each Google Sheets row into `inbound_messages`, `transactions`, and a
+   `transaction_events` row with `event_type = 'created'` when source message
+   metadata exists.
+4. Leave `created_from_message_id` null only for legacy rows where original
+   provider message metadata is unavailable.
+5. Verify row counts, monthly totals, currencies, categories, merchants, and
+   latest-transaction behavior.
 6. Switch production writes to PostgreSQL.
-7. Keep Google Sheets as an optional export if spreadsheet visibility is still
-   useful.
+7. Keep Google Sheets as a read-only source/export target if spreadsheet
+   visibility is still useful.
 
 ## Deliberately Out Of Scope For V1
 

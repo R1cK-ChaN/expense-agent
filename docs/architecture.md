@@ -238,6 +238,34 @@ inside the PostgreSQL integration module and implements the same repository
 contract used by `TransactionService`; production runtime wiring can select it
 with `STORAGE_BACKEND=postgres` and `DATABASE_URL`.
 
+### PostgreSQL Backfill And Verification Scripts
+
+Owns:
+
+- Reading existing Google Sheets transaction rows through the Google Sheets
+  repository.
+- Preflighting duplicate transaction IDs, duplicate source message tuples,
+  missing source metadata, unsupported non-expense rows, and conflicting
+  PostgreSQL rows.
+- Importing rows into PostgreSQL through the PostgreSQL repository only when
+  `--execute` is explicitly supplied.
+- Comparing Google Sheets and PostgreSQL row counts, row values, monthly totals,
+  currency/category/merchant counts, and latest expense records before cutover.
+- Documenting production cutover, rollback, and the read-only Google Sheets
+  transition state.
+
+Does not own:
+
+- Parser behavior.
+- Runtime request handling.
+- Production configuration changes without operator approval.
+- Removing Google Sheets support.
+
+The backfill command lives in
+`scripts/backfill_google_sheets_to_postgres.py` and defaults to dry-run mode.
+The verification command lives in `scripts/verify_postgres_backfill.py`.
+Operational steps are documented in `docs/postgres-backfill-cutover.md`.
+
 ### Exchange-Rate Provider
 
 Owns:
