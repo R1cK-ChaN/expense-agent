@@ -49,7 +49,7 @@ SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,
 Example Secret Manager mappings:
 
 ```text
-TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,PARSER_API_KEY=parser-api-key:latest,GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest
+TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest
 ```
 
 ## GCP Setup
@@ -57,8 +57,8 @@ TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-we
 Create or reuse:
 
 - An Artifact Registry Docker repository in `CLOUD_RUN_REGION`.
-- A public Cloud Run service named by `CLOUD_RUN_SERVICE` so Telegram can call
-  the webhook.
+- A public Cloud Run service named by `CLOUD_RUN_SERVICE` so Telegram and
+  WeChat can call the webhooks.
 - Secret Manager secrets for the required runtime secret environment variables.
 - A runtime service account with access to the required Secret Manager secrets.
 - A deploy service account for GitHub Actions.

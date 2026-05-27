@@ -71,7 +71,7 @@ def test_configured_app_wires_transaction_service(monkeypatch):
             "reply_to_message_id": "9001",
         }
     ]
-    assert sheets_client.rows[1][1:14] == [
+    assert sheets_client.rows[1][1:15] == [
         "2026-05-20",
         "12.5",
         "SGD",
@@ -80,14 +80,58 @@ def test_configured_app_wires_transaction_service(monkeypatch):
         "麦当劳",
         "",
         "午饭",
+        "telegram",
         "42",
         "",
         "Ada",
         "12345",
         "9001",
     ]
-    assert sheets_client.rows[1][14] == sheets_client.rows[1][15]
-    assert sheets_client.rows[1][14].endswith("+08:00")
+    assert sheets_client.rows[1][15] == sheets_client.rows[1][16]
+    assert sheets_client.rows[1][15].endswith("+08:00")
+
+
+def test_custom_telegram_handler_does_not_build_default_wechat_handler(monkeypatch):
+    from app import main as app_main
+
+    monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
+    monkeypatch.setenv("PARSER_MODEL", "parser-model")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet-1")
+    monkeypatch.setattr(
+        app_main,
+        "build_google_sheets_values_client",
+        lambda service_account_json: (_ for _ in ()).throw(
+            AssertionError("default transaction handler should not be built")
+        ),
+        raising=False,
+    )
+    reply_client = FakeTelegramReplyClient()
+
+    app = app_main.create_app(
+        telegram_reply_client=reply_client,
+        telegram_webhook_secret="webhook-secret",
+        telegram_text_handler=lambda message: "custom reply",
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1000,
+            "message": {
+                "message_id": 9001,
+                "date": 1779251400,
+                "chat": {"id": 12345, "type": "private"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
+                "text": "午饭 12.5 麦当劳",
+            },
+        },
+        headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
+    )
+
+    assert response.status_code == 200
+    assert reply_client.sent_messages[0]["text"] == "custom reply"
 
 
 class FakeLLMClient:

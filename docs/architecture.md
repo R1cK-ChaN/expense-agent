@@ -4,31 +4,31 @@
 
 Expense Agent has five primary boundaries:
 
-- Telegram is the user interface.
+- Telegram and WeChat Official Account are inbound and reply IM interfaces.
 - Backend services own orchestration, validation, persistence decisions, and replies.
 - The LLM is parser-only and returns structured intent.
 - Google Sheets is the MVP storage system.
 - The exchange-rate provider supplies deterministic historical rates for reporting.
 
-The backend is the only component allowed to decide whether data is valid, whether storage should change, and what Telegram reply should be sent.
+The backend is the only component allowed to decide whether data is valid, whether storage should change, and what IM reply should be sent.
 
 ## Runtime Flow
 
 ### Create Transaction
 
-1. Telegram sends an update to the bot webhook or polling process.
-2. The Telegram adapter extracts message text and metadata.
+1. Telegram or WeChat sends a text message to the platform webhook.
+2. The platform adapter extracts message text and source metadata.
 3. The application service sends the raw text and relevant defaults to the parser port.
 4. The parser returns a structured parser result.
 5. The application service validates the parser result against the domain model.
-6. The application service checks whether the Telegram message already created a transaction.
+6. The application service checks whether the source platform/user/chat/message tuple already created a transaction.
 7. The Google Sheets repository appends one transaction row when validation passes and no duplicate exists.
 8. The application service formats a confirmation reply.
-9. The Telegram adapter sends the reply to the originating chat.
+9. The platform adapter sends or returns the reply to the originating conversation.
 
 ### Update Transaction
 
-1. Telegram receives an update request.
+1. Telegram or WeChat receives an update request.
 2. The parser identifies `update_recent_expense` intent and requested changes.
 3. The application service resolves the target transaction through the repository.
 4. The application service validates that exactly one target exists and every changed field is valid.
@@ -37,24 +37,26 @@ The backend is the only component allowed to decide whether data is valid, wheth
 
 ### Query Transactions
 
-1. Telegram receives a query request.
+1. Telegram or WeChat receives a query request.
 2. The parser identifies `query_monthly_total` intent and month/currency filters.
 3. The application service validates and bounds the query.
 4. The repository reads matching rows from Google Sheets.
 5. The application service converts non-default-currency rows with transaction-date exchange rates when a default-currency total is requested.
 6. The application service formats totals or a compact transaction list.
-7. The bot replies without mutating storage.
+7. The platform adapter replies without mutating storage.
 
 ## Component Responsibilities
 
-### Telegram Adapter
+### Telegram and WeChat Adapters
 
 Owns:
 
 - Receiving Telegram updates.
-- Extracting message text and Telegram metadata.
-- Sending replies to Telegram.
-- Translating Telegram delivery errors into backend errors.
+- Receiving WeChat Official Account callback and message webhooks.
+- Extracting message text and provider metadata.
+- Normalizing provider payloads into `InboundMessage`.
+- Sending or returning replies through the provider-specific mechanism.
+- Translating provider delivery errors into backend errors.
 
 Does not own:
 
@@ -63,11 +65,15 @@ Does not own:
 - Writing Google Sheets rows.
 - Business decisions about supported intents.
 
-The webhook adapter lives in `app/telegram_webhook.py` and exposes
+The shared inbound message contract lives in `core/messages.py` as
+`InboundMessage`. Telegram and WeChat adapters map provider payloads into this
+shape with `source_platform`, `source_user_id`, `source_chat_id`,
+`source_message_id`, raw text, optional display metadata, and received
+timestamp fields.
+
+The Telegram webhook adapter lives in `app/telegram_webhook.py` and exposes
 `POST /telegram/webhook`. It supports private text messages and group or
 supergroup text messages that explicitly mention the configured bot username.
-Handled messages are normalized into `TelegramInboundMessage` with Telegram
-user, chat, message, text, user display metadata, and received timestamp fields.
 For groups, the bot mention is stripped before parser input. Group messages
 without the bot mention are acknowledged and ignored. Private non-text messages
 receive the fixed unsupported message reply. The route requires Telegram's
@@ -78,6 +84,15 @@ The outbound Telegram client lives in `integrations/telegram_client.py`. It
 wraps the Bot API `sendMessage` method, takes the bot token from runtime
 configuration, and accepts an injectable JSON transport for contract tests.
 
+The WeChat Official Account webhook adapter lives in `app/wechat_webhook.py`
+and exposes `GET /wechat/webhook` for callback verification plus
+`POST /wechat/webhook` for message delivery. GET verification checks WeChat's
+SHA-1 signature over the configured token, timestamp, and nonce before
+returning `echostr`. POST verifies the same signature, parses text XML
+messages, normalizes them into `InboundMessage`, and returns a passive text XML
+reply. Unsupported or malformed WeChat messages are acknowledged with
+`success` and are not handed to the application service.
+
 ### Application Service
 
 Owns:
@@ -87,32 +102,32 @@ Owns:
 - Validating domain invariants before storage writes.
 - Applying valid supported update fields while ignoring unsupported
   parser-proposed fields when at least one safe change remains.
-- Enforcing idempotency for Telegram update processing.
+- Enforcing idempotency for IM message processing.
 - Formatting confirmation, clarification, empty-result, and error replies.
 - Coordinating repositories, parser ports, and exchange-rate providers.
 
 Does not own:
 
-- Provider-specific Telegram HTTP details.
+- Provider-specific Telegram or WeChat HTTP/XML details.
 - Prompt wording or LLM provider internals.
 - Google Sheets API details.
 - Provider-specific exchange-rate HTTP details.
 
 Create-expense orchestration lives in `core/transaction_service.py`. The
-service accepts normalized Telegram message metadata, checks the repository for
-an existing `telegram_user_id`, `telegram_chat_id`, and `telegram_message_id`
-before parsing, sends the normalized text to the parser, validates
-create-expense output, appends one
-transaction row, and returns the reply text for the Telegram adapter to send.
+service accepts normalized IM source metadata, checks the repository for an
+existing `source_platform`, `source_user_id`, `source_chat_id`, and
+`source_message_id` before parsing, sends the normalized text to the parser,
+validates create-expense output, appends one transaction row, and returns the
+reply text for the platform adapter to send.
 Low-confidence create-expense parser results produce a clarification reply and
 do not write to storage.
-Duplicate Telegram retries return the stored transaction confirmation without a
+Duplicate provider retries return the stored transaction confirmation without a
 second append.
 
-`app/main.py` wires this service as the default Telegram text handler when the
-parser credentials, parser model, Google service account JSON, and Google Sheet
-ID are configured. Without those runtime settings, the app still imports and
-serves health checks without external credentials.
+`app/main.py` wires this service as the default Telegram and WeChat text
+handler when the parser credentials, parser model, Google service account JSON,
+and Google Sheet ID are configured. Without those runtime settings, the app
+still imports and serves health checks without external credentials.
 
 ### Domain Validation
 
@@ -127,7 +142,7 @@ Does not own:
 
 - Prompt wording or LLM provider behavior.
 - Generating repository identifiers or storage timestamps.
-- Sending Telegram replies or appending Google Sheets rows.
+- Sending IM replies or appending Google Sheets rows.
 
 The create-expense validator lives in `core/validator.py`. It accepts typed
 parser results plus runtime defaults, returns either a `ValidatedExpense` or a
@@ -149,7 +164,7 @@ Owns:
 Does not own:
 
 - Calling Google Sheets.
-- Sending Telegram messages.
+- Sending Telegram or WeChat messages.
 - Deciding that a transaction should be persisted.
 - Performing updates, deletes, or queries.
 - Performing exchange-rate conversion.
@@ -159,7 +174,7 @@ The parser contract lives in `core/intent_parser.py`. It builds the parser-only
 system prompt, sends raw text plus date/currency defaults to an injectable LLM
 client, and strictly validates the JSON response before returning typed parser
 results. Malformed provider output is converted into a controlled parser failure
-without mutating storage or sending Telegram messages. Create-expense categories
+without mutating storage or sending IM messages. Create-expense categories
 outside the canonical allowlist are preserved for domain validation, where they
 default to `未分类` instead of being treated as provider-shape failures.
 
@@ -180,7 +195,7 @@ Owns:
 Does not own:
 
 - Natural-language parsing.
-- Telegram reply formatting.
+- IM reply formatting.
 - Domain validation beyond defensive repository checks.
 
 The repository implementation lives in `integrations/google_sheets/repository.py`.
@@ -210,7 +225,7 @@ reporting; original transaction amount and currency are never overwritten.
 
 ## Data Ownership
 
-- Raw Telegram text is owned by the Telegram adapter until it is handed to the application service.
+- Raw IM text is owned by the provider adapter until it is handed to the application service.
 - Parsed intent is owned by the parser port as an untrusted proposal.
 - Validated transaction state is owned by the application service and persisted through the repository.
 - Google Sheets owns durable MVP storage after a write succeeds.
@@ -232,12 +247,13 @@ Expected user-correctable errors:
 Expected system errors:
 
 - Telegram API failure.
+- WeChat callback signature or XML handling failure.
 - Parser provider timeout or malformed parser response.
 - Google Sheets API failure.
 - Exchange-rate provider failure.
 - Missing or invalid runtime configuration.
 
-User-correctable errors should produce a clear Telegram reply and no storage mutation. System errors should produce a generic failure reply, preserve enough logs for debugging, and avoid duplicate writes on retry.
+User-correctable errors should produce a clear IM reply and no storage mutation. System errors should produce a generic failure reply, preserve enough logs for debugging, and avoid duplicate writes on retry.
 
 ## Configuration
 
@@ -245,6 +261,7 @@ Required configuration:
 
 - Telegram bot token.
 - Telegram webhook secret token.
+- WeChat Official Account token for callback signature verification.
 - Parser provider credentials and model identifier.
 - Google Sheets credentials.
 - Google Sheet identifier and worksheet name.
@@ -268,7 +285,7 @@ Build, deploy the image to Cloud Run, and check `/health`.
 
 Runtime secret values remain in GCP Secret Manager. The deploy workflow accepts
 only secret names and versions through `CLOUD_RUN_SECRET_MAPPINGS`; it does not
-store Telegram, parser, or Google credential values in GitHub.
+store Telegram, WeChat, parser, or Google credential values in GitHub.
 
 ## Testable Contracts
 
@@ -277,7 +294,8 @@ Future implementation should keep these contracts independently testable:
 - Parser contract: raw text to parser result.
 - Domain validation contract: parser result plus defaults to valid command or clarification.
 - Repository contract: transaction append, update, lookup, and query behavior.
-- Telegram adapter contract: Telegram update to metadata and reply call.
+- Telegram adapter contract: Telegram update to source metadata and reply call.
+- WeChat adapter contract: callback verification, text XML normalization, and passive reply XML.
 - Application service contract: orchestration across parser, validation, repository, and replies.
 
 The parser contract is covered with fake LLM client tests for create expense,
@@ -289,7 +307,9 @@ mapping can be tested without real credentials.
 The Telegram webhook contract is covered with FastAPI request tests and a fake
 reply client. The Telegram Bot API client contract is covered with a fake JSON
 transport so the tested payload targets the originating `chat_id` without using
-real credentials.
+real credentials. The WeChat webhook contract is covered with FastAPI request
+tests for signature verification, XML text-message normalization, and passive
+reply XML.
 
 The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
@@ -301,7 +321,7 @@ fallback, expense-only type enforcement, and multiple-expense rejection.
 
 The create-expense application service contract is covered with fake parser and
 repository tests for successful appends, configured defaults, relative dates,
-missing amount, duplicate Telegram retries, low-confidence parser output,
+missing amount, duplicate provider retries, low-confidence parser output,
 unknown intent, parser failure, and Google Sheets write failure. App bootstrap
 tests also cover the configured runtime wiring from webhook message to sheet
 append and Telegram reply.

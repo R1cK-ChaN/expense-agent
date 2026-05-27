@@ -27,7 +27,7 @@ def test_append_transaction_writes_canonical_row_order():
     assert sheets_client.append_calls == [
         (
             "sheet-1",
-            "Transactions!A:P",
+            "Transactions!A:Q",
             [
                 [
                     "txn-1",
@@ -39,6 +39,7 @@ def test_append_transaction_writes_canonical_row_order():
                     "",
                     "card",
                     "lunch",
+                    "telegram",
                     "42",
                     "ada",
                     "Ada Lovelace",
@@ -72,14 +73,14 @@ def test_append_transaction_validates_headers_before_mutating(rows):
     assert sheets_client.append_calls == []
 
 
-def test_find_by_telegram_message_returns_existing_transaction():
+def test_find_by_source_message_returns_existing_transaction():
     sheets_client = InMemorySheetsClient(
         [
             transaction_header_row(),
             make_row(
                 transaction_id="txn-1",
-                telegram_user_id="42",
-                telegram_message_id="9001",
+                source_user_id="42",
+                source_message_id="9001",
             ),
         ]
     )
@@ -88,7 +89,8 @@ def test_find_by_telegram_message_returns_existing_transaction():
         sheets_client=sheets_client,
     )
 
-    record = repository.find_by_telegram_message(
+    record = repository.find_by_source_message(
+        source_platform="telegram",
         user_id="42",
         chat_id="12345",
         message_id="9001",
@@ -96,16 +98,16 @@ def test_find_by_telegram_message_returns_existing_transaction():
 
     assert record == make_record(
         transaction_id="txn-1",
-        telegram_user_id="42",
-        telegram_message_id="9001",
+        source_user_id="42",
+        source_message_id="9001",
     )
 
 
-def test_find_by_telegram_message_returns_none_when_missing():
+def test_find_by_source_message_returns_none_when_missing():
     sheets_client = InMemorySheetsClient(
         [
             transaction_header_row(),
-            make_row(telegram_user_id="42", telegram_message_id="9001"),
+            make_row(source_user_id="42", source_message_id="9001"),
         ]
     )
     repository = GoogleSheetsTransactionRepository(
@@ -114,7 +116,8 @@ def test_find_by_telegram_message_returns_none_when_missing():
     )
 
     assert (
-        repository.find_by_telegram_message(
+        repository.find_by_source_message(
+            source_platform="telegram",
             user_id="42",
             chat_id="12345",
             message_id="9002",
@@ -123,19 +126,19 @@ def test_find_by_telegram_message_returns_none_when_missing():
     )
 
 
-def test_find_by_telegram_message_matches_chat_id_for_idempotency():
+def test_find_by_source_message_matches_chat_id_for_idempotency():
     sheets_client = InMemorySheetsClient(
         [
             transaction_header_row(),
             make_row(
                 transaction_id="private-message",
-                telegram_chat_id="12345",
-                telegram_message_id="9001",
+                source_chat_id="12345",
+                source_message_id="9001",
             ),
             make_row(
                 transaction_id="group-message",
-                telegram_chat_id="-100123",
-                telegram_message_id="9001",
+                source_chat_id="-100123",
+                source_message_id="9001",
             ),
         ]
     )
@@ -144,7 +147,8 @@ def test_find_by_telegram_message_matches_chat_id_for_idempotency():
         sheets_client=sheets_client,
     )
 
-    record = repository.find_by_telegram_message(
+    record = repository.find_by_source_message(
+        source_platform="telegram",
         user_id="42",
         chat_id="-100123",
         message_id="9001",
@@ -154,29 +158,65 @@ def test_find_by_telegram_message_matches_chat_id_for_idempotency():
     assert record.id == "group-message"
 
 
+def test_find_by_source_message_matches_platform_for_idempotency():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            make_row(
+                transaction_id="telegram-message",
+                source_platform="telegram",
+                source_user_id="42",
+                source_chat_id="12345",
+                source_message_id="9001",
+            ),
+            make_row(
+                transaction_id="wechat-message",
+                source_platform="wechat",
+                source_user_id="42",
+                source_chat_id="12345",
+                source_message_id="9001",
+            ),
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    record = repository.find_by_source_message(
+        source_platform="wechat",
+        user_id="42",
+        chat_id="12345",
+        message_id="9001",
+    )
+
+    assert record is not None
+    assert record.id == "wechat-message"
+
+
 def test_get_latest_transaction_returns_newest_user_expense_by_created_at():
     sheets_client = InMemorySheetsClient(
         [
             transaction_header_row(),
             make_row(
                 transaction_id="old-expense",
-                telegram_user_id="42",
+                source_user_id="42",
                 created_at="2026-05-19T10:00:00+00:00",
             ),
             make_row(
                 transaction_id="other-user-expense",
-                telegram_user_id="7",
+                source_user_id="7",
                 created_at="2026-05-20T15:00:00+00:00",
             ),
             make_row(
                 transaction_id="new-income",
-                telegram_user_id="42",
+                source_user_id="42",
                 transaction_type="income",
                 created_at="2026-05-21T15:00:00+00:00",
             ),
             make_row(
                 transaction_id="new-expense",
-                telegram_user_id="42",
+                source_user_id="42",
                 created_at="2026-05-20T12:00:00+00:00",
             ),
         ]
@@ -186,7 +226,10 @@ def test_get_latest_transaction_returns_newest_user_expense_by_created_at():
         sheets_client=sheets_client,
     )
 
-    record = repository.get_latest_transaction(user_id="42")
+    record = repository.get_latest_transaction(
+        source_platform="telegram",
+        user_id="42",
+    )
 
     assert record is not None
     assert record.id == "new-expense"
@@ -221,13 +264,13 @@ def test_update_transaction_changes_allowed_fields_and_refreshes_updated_at():
 
     assert record.amount == Decimal("15.50")
     assert record.note == "corrected lunch"
-    assert record.telegram_user_id == "42"
+    assert record.source_user_id == "42"
     assert record.created_at == "2026-05-19T10:00:00+00:00"
     assert record.updated_at == "2026-05-20T20:30:00+08:00"
     assert sheets_client.update_calls == [
         (
             "sheet-1",
-            "Transactions!A2:P2",
+            "Transactions!A2:Q2",
             [
                 [
                     "txn-1",
@@ -239,6 +282,7 @@ def test_update_transaction_changes_allowed_fields_and_refreshes_updated_at():
                     "coffee shop",
                     "card",
                     "corrected lunch",
+                    "telegram",
                     "42",
                     "ada",
                     "Ada Lovelace",
@@ -267,7 +311,7 @@ def test_update_transaction_rejects_disallowed_fields():
     with pytest.raises(InvalidTransactionUpdateError):
         repository.update_transaction(
             "txn-1",
-            {"telegram_user_id": "7"},
+            {"source_user_id": "7"},
         )
 
     assert sheets_client.update_calls == []
@@ -279,7 +323,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             transaction_header_row(),
             make_row(
                 transaction_id="sgd-1",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="10.50",
                 currency="SGD",
                 transaction_type="expense",
@@ -287,7 +331,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             ),
             make_row(
                 transaction_id="income",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="99.00",
                 currency="SGD",
                 transaction_type="income",
@@ -295,7 +339,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             ),
             make_row(
                 transaction_id="april",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="4.00",
                 currency="SGD",
                 transaction_type="expense",
@@ -303,7 +347,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             ),
             make_row(
                 transaction_id="other-user",
-                telegram_user_id="7",
+                source_user_id="7",
                 amount="8.00",
                 currency="SGD",
                 transaction_type="expense",
@@ -311,7 +355,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             ),
             make_row(
                 transaction_id="usd",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="6.00",
                 currency="USD",
                 transaction_type="expense",
@@ -319,7 +363,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
             ),
             make_row(
                 transaction_id="sgd-2",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="2.25",
                 currency="SGD",
                 transaction_type="expense",
@@ -333,6 +377,7 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
     )
 
     assert repository.sum_monthly_expense(
+        source_platform="telegram",
         user_id="42",
         month="2026-05",
         currency="SGD",
@@ -345,7 +390,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             transaction_header_row(),
             make_row(
                 transaction_id="sgd-1",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="10.50",
                 currency="SGD",
                 transaction_type="expense",
@@ -353,7 +398,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             ),
             make_row(
                 transaction_id="income",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="99.00",
                 currency="SGD",
                 transaction_type="income",
@@ -361,7 +406,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             ),
             make_row(
                 transaction_id="april",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="4.00",
                 currency="SGD",
                 transaction_type="expense",
@@ -369,7 +414,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             ),
             make_row(
                 transaction_id="other-user",
-                telegram_user_id="7",
+                source_user_id="7",
                 amount="8.00",
                 currency="SGD",
                 transaction_type="expense",
@@ -377,7 +422,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             ),
             make_row(
                 transaction_id="usd",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="6.00",
                 currency="USD",
                 transaction_type="expense",
@@ -385,7 +430,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
             ),
             make_row(
                 transaction_id="cny",
-                telegram_user_id="42",
+                source_user_id="42",
                 amount="30.00",
                 currency="CNY",
                 transaction_type="expense",
@@ -399,6 +444,7 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
     )
 
     records = repository.list_monthly_expenses(
+        source_platform="telegram",
         user_id="42",
         month="2026-05",
     )
@@ -418,6 +464,7 @@ def test_list_monthly_expenses_rejects_non_padded_month():
 
     with pytest.raises(ValueError, match="YYYY-MM"):
         repository.list_monthly_expenses(
+            source_platform="telegram",
             user_id="42",
             month="2026-5",
         )
@@ -431,6 +478,7 @@ def test_sum_monthly_expense_rejects_non_padded_month():
 
     with pytest.raises(ValueError, match="YYYY-MM"):
         repository.sum_monthly_expense(
+            source_platform="telegram",
             user_id="42",
             month="2026-5",
             currency="SGD",
@@ -450,11 +498,11 @@ def test_repository_rejects_invalid_sheet_headers_before_reading_rows():
                 "merchant",
                 "payment_method",
                 "note",
-                "telegram_user_id",
-                "telegram_username",
-                "telegram_user_display_name",
-                "telegram_chat_id",
-                "telegram_message_id",
+                "source_user_id",
+                "source_username",
+                "source_user_display_name",
+                "source_chat_id",
+                "source_message_id",
                 "created_at",
                 "updated_at",
             ]
@@ -466,7 +514,8 @@ def test_repository_rejects_invalid_sheet_headers_before_reading_rows():
     )
 
     with pytest.raises(TransactionSheetSchemaError):
-        repository.find_by_telegram_message(
+        repository.find_by_source_message(
+            source_platform="telegram",
             user_id="42",
             chat_id="12345",
             message_id="9001",
@@ -500,7 +549,8 @@ def test_repository_rejects_old_width_rows_after_header_migration():
     )
 
     with pytest.raises(TransactionSheetSchemaError):
-        repository.find_by_telegram_message(
+        repository.find_by_source_message(
+            source_platform="telegram",
             user_id="42",
             chat_id="12345",
             message_id="9001",
@@ -511,17 +561,22 @@ def test_repository_rejects_old_width_rows_after_header_migration():
     "operation",
     [
         lambda repository: repository.append_transaction(make_record()),
-        lambda repository: repository.find_by_telegram_message(
+        lambda repository: repository.find_by_source_message(
+            source_platform="telegram",
             user_id="42",
             chat_id="12345",
             message_id="9001",
         ),
-        lambda repository: repository.get_latest_transaction(user_id="42"),
+        lambda repository: repository.get_latest_transaction(
+            source_platform="telegram",
+            user_id="42",
+        ),
         lambda repository: repository.update_transaction(
             "txn-1",
             {"note": "fixed"},
         ),
         lambda repository: repository.sum_monthly_expense(
+            source_platform="telegram",
             user_id="42",
             month="2026-05",
             currency="SGD",
@@ -548,23 +603,23 @@ def test_google_sheets_values_client_wraps_google_values_api():
     )
     client = GoogleSheetsValuesClient(service)
 
-    assert client.get_values("sheet-1", "Transactions!A:P") == [["id"]]
-    client.append_values("sheet-1", "Transactions!A:P", [["txn-1"]])
-    client.update_values("sheet-1", "Transactions!A2:P2", [["txn-1"]])
+    assert client.get_values("sheet-1", "Transactions!A:Q") == [["id"]]
+    client.append_values("sheet-1", "Transactions!A:Q", [["txn-1"]])
+    client.update_values("sheet-1", "Transactions!A2:Q2", [["txn-1"]])
 
     assert service.calls == [
         (
             "get",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A:P",
+                "range": "Transactions!A:Q",
             },
         ),
         (
             "append",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A:P",
+                "range": "Transactions!A:Q",
                 "valueInputOption": "RAW",
                 "insertDataOption": "INSERT_ROWS",
                 "body": {"values": [["txn-1"]]},
@@ -574,7 +629,7 @@ def test_google_sheets_values_client_wraps_google_values_api():
             "update",
             {
                 "spreadsheetId": "sheet-1",
-                "range": "Transactions!A2:P2",
+                "range": "Transactions!A2:Q2",
                 "valueInputOption": "RAW",
                 "body": {"values": [["txn-1"]]},
             },
@@ -593,11 +648,12 @@ def make_record(
     merchant: str | None = "coffee shop",
     payment_method: str | None = "card",
     note: str | None = "lunch",
-    telegram_user_id: str = "42",
-    telegram_username: str | None = "ada",
-    telegram_user_display_name: str | None = "Ada Lovelace",
-    telegram_chat_id: str = "12345",
-    telegram_message_id: str = "9001",
+    source_platform: str = "telegram",
+    source_user_id: str = "42",
+    source_username: str | None = "ada",
+    source_user_display_name: str | None = "Ada Lovelace",
+    source_chat_id: str = "12345",
+    source_message_id: str = "9001",
     created_at: str = "2026-05-19T10:00:00+00:00",
     updated_at: str = "2026-05-19T10:00:00+00:00",
 ) -> TransactionRecord:
@@ -611,11 +667,12 @@ def make_record(
         merchant=merchant,
         payment_method=payment_method,
         note=note,
-        telegram_user_id=telegram_user_id,
-        telegram_username=telegram_username,
-        telegram_user_display_name=telegram_user_display_name,
-        telegram_chat_id=telegram_chat_id,
-        telegram_message_id=telegram_message_id,
+        source_platform=source_platform,
+        source_user_id=source_user_id,
+        source_username=source_username,
+        source_user_display_name=source_user_display_name,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
         created_at=created_at,
         updated_at=updated_at,
     )
@@ -632,11 +689,12 @@ def make_row(
     merchant: str = "coffee shop",
     payment_method: str = "card",
     note: str = "lunch",
-    telegram_user_id: str = "42",
-    telegram_username: str = "ada",
-    telegram_user_display_name: str = "Ada Lovelace",
-    telegram_chat_id: str = "12345",
-    telegram_message_id: str = "9001",
+    source_platform: str = "telegram",
+    source_user_id: str = "42",
+    source_username: str = "ada",
+    source_user_display_name: str = "Ada Lovelace",
+    source_chat_id: str = "12345",
+    source_message_id: str = "9001",
     created_at: str = "2026-05-19T10:00:00+00:00",
     updated_at: str = "2026-05-19T10:00:00+00:00",
 ) -> list[str]:
@@ -650,11 +708,12 @@ def make_row(
         merchant,
         payment_method,
         note,
-        telegram_user_id,
-        telegram_username,
-        telegram_user_display_name,
-        telegram_chat_id,
-        telegram_message_id,
+        source_platform,
+        source_user_id,
+        source_username,
+        source_user_display_name,
+        source_chat_id,
+        source_message_id,
         created_at,
         updated_at,
     ]

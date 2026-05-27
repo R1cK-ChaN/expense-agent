@@ -87,11 +87,12 @@ class TransactionRecord:
     merchant: str | None
     payment_method: str | None
     note: str | None
-    telegram_user_id: str
-    telegram_username: str | None
-    telegram_user_display_name: str | None
-    telegram_chat_id: str
-    telegram_message_id: str
+    source_platform: str
+    source_user_id: str
+    source_username: str | None
+    source_user_display_name: str | None
+    source_chat_id: str
+    source_message_id: str
     created_at: str
     updated_at: str
 
@@ -126,6 +127,25 @@ class GoogleSheetsTransactionRepository:
 
         return record
 
+    def find_by_source_message(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        chat_id: str,
+        message_id: str,
+    ) -> TransactionRecord | None:
+        for _row_number, record in self._load_records():
+            if (
+                record.source_platform == str(source_platform)
+                and record.source_user_id == str(user_id)
+                and record.source_chat_id == str(chat_id)
+                and record.source_message_id == str(message_id)
+            ):
+                return record
+
+        return None
+
     def find_by_telegram_message(
         self,
         *,
@@ -133,21 +153,27 @@ class GoogleSheetsTransactionRepository:
         chat_id: str,
         message_id: str,
     ) -> TransactionRecord | None:
-        for _row_number, record in self._load_records():
-            if (
-                record.telegram_user_id == str(user_id)
-                and record.telegram_chat_id == str(chat_id)
-                and record.telegram_message_id == str(message_id)
-            ):
-                return record
+        return self.find_by_source_message(
+            source_platform="telegram",
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
 
-        return None
-
-    def get_latest_transaction(self, *, user_id: str) -> TransactionRecord | None:
+    def get_latest_transaction(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+    ) -> TransactionRecord | None:
         matching_records = [
             record
             for _row_number, record in self._load_records()
-            if record.telegram_user_id == str(user_id) and record.type == "expense"
+            if (
+                record.source_platform == str(source_platform)
+                and record.source_user_id == str(user_id)
+                and record.type == "expense"
+            )
         ]
         if not matching_records:
             return None
@@ -181,6 +207,7 @@ class GoogleSheetsTransactionRepository:
     def sum_monthly_expense(
         self,
         *,
+        source_platform: str,
         user_id: str,
         month: str,
         currency: str,
@@ -190,7 +217,8 @@ class GoogleSheetsTransactionRepository:
 
         for _row_number, record in self._load_records():
             if (
-                record.telegram_user_id == str(user_id)
+                record.source_platform == str(source_platform)
+                and record.source_user_id == str(user_id)
                 and record.type == "expense"
                 and record.currency == currency
                 and record.date.startswith(f"{month}-")
@@ -202,6 +230,7 @@ class GoogleSheetsTransactionRepository:
     def list_monthly_expenses(
         self,
         *,
+        source_platform: str,
         user_id: str,
         month: str,
     ) -> list[TransactionRecord]:
@@ -210,7 +239,8 @@ class GoogleSheetsTransactionRepository:
             record
             for _row_number, record in self._load_records()
             if (
-                record.telegram_user_id == str(user_id)
+                record.source_platform == str(source_platform)
+                and record.source_user_id == str(user_id)
                 and record.type == "expense"
                 and record.date.startswith(f"{month}-")
             )
@@ -360,13 +390,14 @@ def _values_to_record(values: Mapping[str, object]) -> TransactionRecord:
         merchant=_optional_string(values["merchant"]),
         payment_method=_optional_string(values["payment_method"]),
         note=_optional_string(values["note"]),
-        telegram_user_id=str(values["telegram_user_id"]),
-        telegram_username=_optional_string(values["telegram_username"]),
-        telegram_user_display_name=_optional_string(
-            values["telegram_user_display_name"]
+        source_platform=str(values["source_platform"]),
+        source_user_id=str(values["source_user_id"]),
+        source_username=_optional_string(values["source_username"]),
+        source_user_display_name=_optional_string(
+            values["source_user_display_name"]
         ),
-        telegram_chat_id=str(values["telegram_chat_id"]),
-        telegram_message_id=str(values["telegram_message_id"]),
+        source_chat_id=str(values["source_chat_id"]),
+        source_message_id=str(values["source_message_id"]),
         created_at=str(values["created_at"]),
         updated_at=str(values["updated_at"]),
     )
@@ -397,13 +428,14 @@ def _row_to_record(row: Sequence[str]) -> TransactionRecord:
         merchant=_blank_to_none(values[6]),
         payment_method=_blank_to_none(values[7]),
         note=_blank_to_none(values[8]),
-        telegram_user_id=values[9],
-        telegram_username=_blank_to_none(values[10]),
-        telegram_user_display_name=_blank_to_none(values[11]),
-        telegram_chat_id=values[12],
-        telegram_message_id=values[13],
-        created_at=values[14],
-        updated_at=values[15],
+        source_platform=values[9],
+        source_user_id=values[10],
+        source_username=_blank_to_none(values[11]),
+        source_user_display_name=_blank_to_none(values[12]),
+        source_chat_id=values[13],
+        source_message_id=values[14],
+        created_at=values[15],
+        updated_at=values[16],
     )
 
 

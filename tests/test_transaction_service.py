@@ -3,7 +3,6 @@ from decimal import Decimal
 
 import pytest
 
-from app.telegram_webhook import TelegramInboundMessage
 from core.intent_parser import (
     IntentParser,
     IntentParserResult,
@@ -12,6 +11,7 @@ from core.intent_parser import (
     ParserContext,
     ParserIntent,
 )
+from core.messages import InboundMessage
 from core.exchange_rates import ExchangeRateConversion, ExchangeRateProviderError
 from core.transaction_service import (
     EXCHANGE_RATE_FAILURE_MESSAGE,
@@ -57,7 +57,7 @@ def test_create_expense_appends_transaction_and_confirms_saved_summary():
             ),
         )
     ]
-    assert repository.find_calls == [("42", "12345", "9001")]
+    assert repository.find_calls == [("telegram", "42", "12345", "9001")]
     assert repository.appended_records == [
         make_record(
             transaction_id="txn-1",
@@ -67,11 +67,56 @@ def test_create_expense_appends_transaction_and_confirms_saved_summary():
         )
     ]
     saved_record = repository.appended_records[0]
-    assert saved_record.telegram_username == "ada"
-    assert saved_record.telegram_user_display_name == "Ada Lovelace"
-    assert saved_record.telegram_chat_id == "12345"
+    assert saved_record.source_platform == "telegram"
+    assert saved_record.source_username == "ada"
+    assert saved_record.source_user_display_name == "Ada Lovelace"
+    assert saved_record.source_chat_id == "12345"
     assert saved_record.created_at == "2026-05-20T13:00:00+08:00"
     assert saved_record.updated_at == "2026-05-20T13:00:00+08:00"
+
+
+def test_create_expense_uses_generic_source_metadata_for_wechat_message():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("12.5"),
+            date="2026-05-20",
+            currency="SGD",
+            category="餐饮",
+            merchant="麦当劳",
+        )
+    )
+    repository = FakeTransactionRepository()
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_message(
+        make_message(
+            text="午饭 12.5 麦当劳",
+            source_platform="wechat",
+            source_user_id="wechat-user",
+            source_chat_id="official-account",
+            source_message_id="msg-9001",
+            source_username=None,
+            source_user_display_name=None,
+        )
+    )
+
+    assert reply == "已记录：2026-05-20 餐饮 12.5 SGD 麦当劳"
+    assert repository.find_calls == [
+        ("wechat", "wechat-user", "official-account", "msg-9001")
+    ]
+    assert repository.appended_records == [
+        make_record(
+            transaction_id="txn-1",
+            amount=Decimal("12.5"),
+            merchant="麦当劳",
+            source_platform="wechat",
+            source_user_id="wechat-user",
+            source_username=None,
+            source_user_display_name=None,
+            source_chat_id="official-account",
+            source_message_id="msg-9001",
+        )
+    ]
 
 
 def test_create_expense_defaults_missing_date_and_currency_before_append():
@@ -334,7 +379,7 @@ def test_update_recent_expense_updates_category_and_confirms_updated_summary():
     )
 
     assert reply == "已更新：2026-05-20 办公 12.5 SGD 麦当劳"
-    assert repository.latest_calls == ["42"]
+    assert repository.latest_calls == [("telegram", "42")]
     assert repository.update_calls == [("txn-latest", {"category": "办公"})]
     assert repository.updated_records == [
         make_record(
@@ -458,7 +503,7 @@ def test_update_recent_expense_without_latest_record_returns_prd_reply():
     )
 
     assert reply == NO_RECENT_EXPENSE_MESSAGE
-    assert repository.latest_calls == ["42"]
+    assert repository.latest_calls == [("telegram", "42")]
     assert repository.update_calls == []
 
 
@@ -478,24 +523,24 @@ def test_update_recent_expense_rejects_unsupported_fields_without_storage_lookup
     assert repository.update_calls == []
 
 
-def test_update_recent_expense_is_scoped_to_current_telegram_user():
+def test_update_recent_expense_is_scoped_to_current_source_user():
     parser = FakeParser(make_update_parser_result(update_fields={"category": "办公"}))
     repository = FakeTransactionRepository(
         latest_records={
             "7": make_record(
                 transaction_id="other-user-latest",
-                telegram_user_id="7",
+                source_user_id="7",
             )
         }
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(
-        make_message(text="刚才那笔改成办公", telegram_user_id="42")
+        make_message(text="刚才那笔改成办公", source_user_id="42")
     )
 
     assert reply == NO_RECENT_EXPENSE_MESSAGE
-    assert repository.latest_calls == ["42"]
+    assert repository.latest_calls == [("telegram", "42")]
     assert repository.update_calls == []
 
 
@@ -507,17 +552,17 @@ def test_duplicate_update_message_reuses_original_target_transaction():
     service = make_service(parser=parser, repository=repository)
 
     service.handle_telegram_message(
-        make_message(text="刚才那笔改成办公", message_id="9002")
+        make_message(text="刚才那笔改成办公", source_message_id="9002")
     )
     repository.set_latest_record(
         "42",
         make_record(transaction_id="newer-expense"),
     )
     service.handle_telegram_message(
-        make_message(text="刚才那笔改成办公", message_id="9002")
+        make_message(text="刚才那笔改成办公", source_message_id="9002")
     )
 
-    assert repository.latest_calls == ["42"]
+    assert repository.latest_calls == [("telegram", "42")]
     assert repository.update_calls == [
         ("original-latest", {"category": "办公"}),
         ("original-latest", {"category": "办公"}),
@@ -561,7 +606,7 @@ def test_query_monthly_total_returns_current_user_sgd_total(text: str):
     reply = service.handle_telegram_message(make_message(text=text))
 
     assert reply == "本月支出合计：123.40 SGD"
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
     assert repository.appended_records == []
     assert repository.update_calls == []
 
@@ -581,7 +626,7 @@ def test_query_monthly_total_uses_message_timezone_for_current_month():
     )
 
     assert reply == "本月支出合计：8.80 SGD"
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
 def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
@@ -594,7 +639,7 @@ def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == "本月支出合计：11.00 SGD"
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
 def test_query_monthly_total_converts_mixed_currencies_to_sgd():
@@ -640,7 +685,7 @@ def test_query_monthly_total_converts_mixed_currencies_to_sgd():
         "其中换算：30 CNY -> 5.40 SGD (汇率日 2026-05-02); "
         "5 USD -> 6.75 SGD (汇率日 2026-05-02)"
     )
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
     assert exchange_rate_provider.calls == [
         (Decimal("30"), "CNY", "SGD", "2026-05-02"),
         (Decimal("5"), "USD", "SGD", "2026-05-03"),
@@ -694,7 +739,7 @@ def test_query_monthly_total_formats_zero_sgd_total():
     reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
 
     assert reply == "本月支出合计：0.00 SGD"
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
 def test_query_monthly_total_repository_failure_returns_fallback():
@@ -705,7 +750,7 @@ def test_query_monthly_total_repository_failure_returns_fallback():
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == PROCESSING_FAILURE_MESSAGE
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
 def test_query_monthly_total_exchange_rate_failure_returns_fallback():
@@ -730,7 +775,7 @@ def test_query_monthly_total_exchange_rate_failure_returns_fallback():
     reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
 
     assert reply == EXCHANGE_RATE_FAILURE_MESSAGE
-    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
 def make_service(
@@ -753,21 +798,23 @@ def make_service(
 def make_message(
     *,
     text: str,
-    telegram_user_id: str = "42",
-    telegram_username: str | None = "ada",
-    telegram_user_display_name: str | None = "Ada Lovelace",
-    chat_id: str = "12345",
-    message_id: str = "9001",
+    source_platform: str = "telegram",
+    source_user_id: str = "42",
+    source_username: str | None = "ada",
+    source_user_display_name: str | None = "Ada Lovelace",
+    source_chat_id: str = "12345",
+    source_message_id: str = "9001",
     received_at: datetime = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
-) -> TelegramInboundMessage:
-    return TelegramInboundMessage(
-        telegram_user_id=telegram_user_id,
-        chat_id=chat_id,
-        message_id=message_id,
+) -> InboundMessage:
+    return InboundMessage(
+        source_platform=source_platform,
+        source_user_id=source_user_id,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
         message_text=text,
         received_at=received_at,
-        telegram_username=telegram_username,
-        telegram_user_display_name=telegram_user_display_name,
+        source_username=source_username,
+        source_user_display_name=source_user_display_name,
     )
 
 
@@ -861,11 +908,12 @@ def make_record(
     merchant: str | None = None,
     payment_method: str | None = None,
     note: str | None = None,
-    telegram_user_id: str = "42",
-    telegram_username: str | None = "ada",
-    telegram_user_display_name: str | None = "Ada Lovelace",
-    telegram_chat_id: str = "12345",
-    telegram_message_id: str = "9001",
+    source_platform: str = "telegram",
+    source_user_id: str = "42",
+    source_username: str | None = "ada",
+    source_user_display_name: str | None = "Ada Lovelace",
+    source_chat_id: str = "12345",
+    source_message_id: str = "9001",
     created_at: str = "2026-05-20T13:00:00+08:00",
     updated_at: str = "2026-05-20T13:00:00+08:00",
 ) -> TransactionRecord:
@@ -879,11 +927,12 @@ def make_record(
         merchant=merchant,
         payment_method=payment_method,
         note=note,
-        telegram_user_id=telegram_user_id,
-        telegram_username=telegram_username,
-        telegram_user_display_name=telegram_user_display_name,
-        telegram_chat_id=telegram_chat_id,
-        telegram_message_id=telegram_message_id,
+        source_platform=source_platform,
+        source_user_id=source_user_id,
+        source_username=source_username,
+        source_user_display_name=source_user_display_name,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
         created_at=created_at,
         updated_at=updated_at,
     )
@@ -914,14 +963,17 @@ class FakeTransactionRepository:
         self,
         *,
         existing_record: TransactionRecord | None = None,
-        latest_records: dict[str, TransactionRecord] | None = None,
+        latest_records: dict[str | tuple[str, str], TransactionRecord] | None = None,
         monthly_records: list[TransactionRecord] | None = None,
         fail_append: bool = False,
         fail_update: bool = False,
         fail_list_monthly: bool = False,
     ) -> None:
         self._existing_record = existing_record
-        self._latest_records = latest_records or {}
+        self._latest_records = {
+            _source_key(key): record
+            for key, record in (latest_records or {}).items()
+        }
         self._records_by_id = {
             record.id: record for record in self._latest_records.values()
         }
@@ -929,25 +981,26 @@ class FakeTransactionRepository:
         self._fail_append = fail_append
         self._fail_update = fail_update
         self._fail_list_monthly = fail_list_monthly
-        self.find_calls: list[tuple[str, str, str]] = []
-        self.latest_calls: list[str] = []
+        self.find_calls: list[tuple[str, str, str, str]] = []
+        self.latest_calls: list[tuple[str, str]] = []
         self.appended_records: list[TransactionRecord] = []
         self.update_calls: list[tuple[str, dict[str, object]]] = []
         self.updated_records: list[TransactionRecord] = []
-        self.list_monthly_calls: list[tuple[str, str]] = []
+        self.list_monthly_calls: list[tuple[str, str, str]] = []
 
     def set_latest_record(self, user_id: str, record: TransactionRecord) -> None:
-        self._latest_records[user_id] = record
+        self._latest_records[("telegram", user_id)] = record
         self._records_by_id[record.id] = record
 
-    def find_by_telegram_message(
+    def find_by_source_message(
         self,
         *,
+        source_platform: str,
         user_id: str,
         chat_id: str,
         message_id: str,
     ) -> TransactionRecord | None:
-        self.find_calls.append((user_id, chat_id, message_id))
+        self.find_calls.append((source_platform, user_id, chat_id, message_id))
         return self._existing_record
 
     def append_transaction(self, record: TransactionRecord) -> TransactionRecord:
@@ -959,10 +1012,11 @@ class FakeTransactionRepository:
     def get_latest_transaction(
         self,
         *,
+        source_platform: str,
         user_id: str,
     ) -> TransactionRecord | None:
-        self.latest_calls.append(user_id)
-        return self._latest_records.get(user_id)
+        self.latest_calls.append((source_platform, user_id))
+        return self._latest_records.get((source_platform, user_id))
 
     def update_transaction(
         self,
@@ -987,14 +1041,21 @@ class FakeTransactionRepository:
     def list_monthly_expenses(
         self,
         *,
+        source_platform: str,
         user_id: str,
         month: str,
     ) -> list[TransactionRecord]:
-        self.list_monthly_calls.append((user_id, month))
+        self.list_monthly_calls.append((source_platform, user_id, month))
         if self._fail_list_monthly:
             raise TransactionRepositoryError("list failed")
 
         return list(self._monthly_records)
+
+
+def _source_key(key: object) -> tuple[str, str]:
+    if isinstance(key, tuple):
+        return key
+    return ("telegram", str(key))
 
 
 class FakeExchangeRateProvider:

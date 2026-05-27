@@ -5,6 +5,7 @@ from app.telegram_webhook import (
     TelegramTextHandler,
     create_telegram_webhook_router,
 )
+from app.wechat_webhook import WeChatTextHandler, create_wechat_webhook_router
 from config.settings import Settings, load_settings
 from core.intent_parser import IntentParser
 from core.transaction_service import TransactionService
@@ -23,6 +24,8 @@ def create_app(
     telegram_webhook_secret: str | None = None,
     telegram_bot_username: str | None = None,
     telegram_text_handler: TelegramTextHandler | None = None,
+    wechat_token: str | None = None,
+    wechat_text_handler: WeChatTextHandler | None = None,
 ) -> FastAPI:
     settings = load_settings()
     application = FastAPI(title="Expense Agent")
@@ -30,8 +33,10 @@ def create_app(
         telegram_reply_client = TelegramBotClient(
             bot_token=settings.telegram_bot_token,
         )
-    if telegram_text_handler is None:
-        telegram_text_handler = _build_transaction_text_handler(settings)
+    if telegram_text_handler is None and wechat_text_handler is None:
+        default_text_handler = _build_transaction_text_handler(settings)
+        telegram_text_handler = default_text_handler
+        wechat_text_handler = default_text_handler
 
     @application.get("/health")
     def health() -> dict[str, str]:
@@ -54,6 +59,14 @@ def create_app(
                 else settings.telegram_bot_username
             ),
             telegram_text_handler=telegram_text_handler,
+        )
+    )
+    application.include_router(
+        create_wechat_webhook_router(
+            wechat_token=(
+                wechat_token if wechat_token is not None else settings.wechat_token
+            ),
+            wechat_text_handler=wechat_text_handler,
         )
     )
 
@@ -82,7 +95,7 @@ def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler |
         timezone=settings.default_timezone,
         default_currency=settings.default_currency,
     )
-    return service.handle_telegram_message
+    return service.handle_message
 
 
 def _transaction_service_configured(settings: Settings) -> bool:

@@ -14,6 +14,7 @@ from core.exchange_rates import (
     ExchangeRateProviderError,
 )
 from core.intent_parser import IntentParserResult, ParserContext, ParserIntent
+from core.messages import InboundMessage
 from core.validator import (
     ValidationContext,
     ValidationResult,
@@ -43,16 +44,6 @@ MONTHLY_TOTAL_AMOUNT_QUANTUM = Decimal("0.01")
 logger = logging.getLogger(__name__)
 
 
-class TelegramMessage(Protocol):
-    telegram_user_id: str
-    telegram_username: str | None
-    telegram_user_display_name: str | None
-    chat_id: str
-    message_id: str
-    message_text: str
-    received_at: datetime
-
-
 class ExpenseIntentParser(Protocol):
     def parse(
         self,
@@ -64,9 +55,10 @@ class ExpenseIntentParser(Protocol):
 
 
 class TransactionRepository(Protocol):
-    def find_by_telegram_message(
+    def find_by_source_message(
         self,
         *,
+        source_platform: str,
         user_id: str,
         chat_id: str,
         message_id: str,
@@ -79,6 +71,7 @@ class TransactionRepository(Protocol):
     def get_latest_transaction(
         self,
         *,
+        source_platform: str,
         user_id: str,
     ) -> TransactionRecord | None:
         raise NotImplementedError
@@ -93,6 +86,7 @@ class TransactionRepository(Protocol):
     def list_monthly_expenses(
         self,
         *,
+        source_platform: str,
         user_id: str,
         month: str,
     ) -> list[TransactionRecord]:
@@ -150,17 +144,18 @@ class TransactionService:
         self._update_validator = update_validator
         self._clock = clock or _utc_now
         self._id_factory = id_factory or _default_transaction_id
-        self._update_targets_by_message: dict[tuple[str, str, str], str] = {}
+        self._update_targets_by_message: dict[tuple[str, str, str, str], str] = {}
 
-    def __call__(self, message: TelegramMessage) -> str:
-        return self.handle_telegram_message(message)
+    def __call__(self, message: InboundMessage) -> str:
+        return self.handle_message(message)
 
-    def handle_telegram_message(self, message: TelegramMessage) -> str:
+    def handle_message(self, message: InboundMessage) -> str:
         try:
-            existing_record = self._repository.find_by_telegram_message(
-                user_id=message.telegram_user_id,
-                chat_id=message.chat_id,
-                message_id=message.message_id,
+            existing_record = self._repository.find_by_source_message(
+                source_platform=message.source_platform,
+                user_id=message.source_user_id,
+                chat_id=message.source_chat_id,
+                message_id=message.source_message_id,
             )
         except TransactionRepositoryError:
             logger.exception("Failed to check transaction duplicate status.")
@@ -179,7 +174,7 @@ class TransactionService:
                 ),
             )
         except Exception:
-            logger.exception("Failed to parse Telegram message.")
+            logger.exception("Failed to parse inbound message.")
             return PROCESSING_FAILURE_MESSAGE
 
         if not parser_result.is_success:
@@ -227,11 +222,14 @@ class TransactionService:
 
         return _format_confirmation(saved_record)
 
+    def handle_telegram_message(self, message: InboundMessage) -> str:
+        return self.handle_message(message)
+
     def _handle_update_recent_expense(
         self,
         parser_result: IntentParserResult,
         *,
-        message: TelegramMessage,
+        message: InboundMessage,
     ) -> str:
         if parser_result.confidence < MIN_UPDATE_EXPENSE_CONFIDENCE:
             return LOW_CONFIDENCE_MESSAGE
@@ -248,15 +246,17 @@ class TransactionService:
             return validation.user_message or UNKNOWN_INTENT_MESSAGE
 
         update_message_key = (
-            message.telegram_user_id,
-            message.chat_id,
-            message.message_id,
+            message.source_platform,
+            message.source_user_id,
+            message.source_chat_id,
+            message.source_message_id,
         )
         transaction_id = self._update_targets_by_message.get(update_message_key)
         if transaction_id is None:
             try:
                 latest_record = self._repository.get_latest_transaction(
-                    user_id=message.telegram_user_id,
+                    source_platform=message.source_platform,
+                    user_id=message.source_user_id,
                 )
             except TransactionRepositoryError:
                 logger.exception("Failed to load latest transaction.")
@@ -282,7 +282,7 @@ class TransactionService:
         self,
         parser_result: IntentParserResult,
         *,
-        message: TelegramMessage,
+        message: InboundMessage,
     ) -> str:
         if parser_result.confidence < MIN_QUERY_MONTHLY_TOTAL_CONFIDENCE:
             return LOW_CONFIDENCE_MESSAGE
@@ -307,7 +307,8 @@ class TransactionService:
 
         try:
             records = self._repository.list_monthly_expenses(
-                user_id=message.telegram_user_id,
+                source_platform=message.source_platform,
+                user_id=message.source_user_id,
                 month=current_month,
             )
         except TransactionRepositoryError:
@@ -330,7 +331,7 @@ class TransactionService:
         self,
         expense: ValidatedExpense,
         *,
-        message: TelegramMessage,
+        message: InboundMessage,
     ) -> TransactionRecord:
         timestamp = _format_timestamp(self._clock(), self._timezone)
         return TransactionRecord(
@@ -343,11 +344,12 @@ class TransactionService:
             merchant=expense.merchant,
             payment_method=expense.payment_method,
             note=expense.note,
-            telegram_user_id=message.telegram_user_id,
-            telegram_username=message.telegram_username,
-            telegram_user_display_name=message.telegram_user_display_name,
-            telegram_chat_id=message.chat_id,
-            telegram_message_id=message.message_id,
+            source_platform=message.source_platform,
+            source_user_id=message.source_user_id,
+            source_username=message.source_username,
+            source_user_display_name=message.source_user_display_name,
+            source_chat_id=message.source_chat_id,
+            source_message_id=message.source_message_id,
             created_at=timestamp,
             updated_at=timestamp,
         )

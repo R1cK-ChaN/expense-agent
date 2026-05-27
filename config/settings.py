@@ -8,6 +8,7 @@ from integrations.google_sheets.schema import TRANSACTIONS_SHEET_NAME
 REQUIRED_SECRET_ENV_VARS = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET",
+    "WECHAT_TOKEN",
     "PARSER_API_KEY",
     "GOOGLE_SERVICE_ACCOUNT_JSON",
 )
@@ -24,6 +25,7 @@ class Settings:
     telegram_bot_username: str | None
     telegram_bot_token: str | None = field(repr=False)
     telegram_webhook_secret: str | None = field(repr=False)
+    wechat_token: str | None = field(repr=False)
     parser_api_key: str | None = field(repr=False)
     google_service_account_json: str | None = field(repr=False)
 
@@ -61,6 +63,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             values,
             "TELEGRAM_WEBHOOK_SECRET",
         ),
+        wechat_token=_optional_value(values, "WECHAT_TOKEN"),
         parser_api_key=_optional_value(values, "PARSER_API_KEY"),
         google_service_account_json=_optional_value(
             values,
