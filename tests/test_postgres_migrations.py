@@ -8,6 +8,7 @@ MIGRATION_PATH = ROOT / "migrations" / "0001_initial_schema.sql"
 EXTERNAL_ID_MIGRATION_PATH = (
     ROOT / "migrations" / "0002_add_transaction_external_id.sql"
 )
+SHEET_EXPORT_MIGRATION_PATH = ROOT / "migrations" / "0003_google_sheets_export.sql"
 
 
 def _migration_sql() -> str:
@@ -67,6 +68,19 @@ def test_transaction_external_id_migration_preserves_domain_ids():
     assert "transactions_external_id_key unique (external_id)" in sql
 
 
+def test_google_sheets_export_migration_adds_per_user_sync_config():
+    sql = SHEET_EXPORT_MIGRATION_PATH.read_text().lower()
+
+    assert "create table google_sheet_exports" in sql
+    assert "user_id uuid primary key references users(id)" in sql
+    assert "spreadsheet_id text not null" in sql
+    assert "enabled boolean not null default true" in sql
+    assert "last_synced_event_id uuid references transaction_events(id)" in sql
+    assert "last_synced_at timestamptz" in sql
+    assert "last_error text" in sql
+    assert "idx_google_sheet_exports_enabled" in sql
+
+
 def test_transaction_events_support_append_only_audit_history():
     sql = _migration_sql()
 
@@ -112,3 +126,4 @@ def test_postgres_migration_check_command_validates_local_files():
     assert result.returncode == 0
     assert "0001_initial_schema.sql" in result.stdout
     assert "0002_add_transaction_external_id.sql" in result.stdout
+    assert "0003_google_sheets_export.sql" in result.stdout

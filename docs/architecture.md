@@ -2,13 +2,15 @@
 
 ## System Boundary
 
-Expense Agent has five primary boundaries:
+Expense Agent has six primary boundaries:
 
 - Telegram and WeChat Official Account are inbound and reply IM interfaces.
 - Backend services own orchestration, validation, persistence decisions, and replies.
 - The LLM is parser-only and returns structured intent.
 - Google Sheets is the MVP storage system.
 - PostgreSQL is the durable storage target behind the same repository boundary.
+- Google Sheets export is a one-way read projection when PostgreSQL owns
+  transaction storage.
 - The exchange-rate provider supplies deterministic historical rates for reporting.
 
 The backend is the only component allowed to decide whether data is valid, whether storage should change, and what IM reply should be sent.
@@ -46,6 +48,24 @@ The backend is the only component allowed to decide whether data is valid, wheth
 5. The application service converts non-default-currency rows with transaction-date exchange rates when a default-currency total is requested.
 6. The application service formats totals or a compact transaction list.
 7. The platform adapter replies without mutating storage.
+
+### Google Sheets Export Projection
+
+1. A PostgreSQL operator configures one `google_sheet_exports` row per internal
+   user with the user's Google spreadsheet ID.
+2. The sync runner reads enabled export configs and pending transaction events
+   after each user's `last_synced_event_id`.
+3. The runner maps the current database transaction state to user-facing ledger
+   fields only.
+4. The Google Sheets export adapter upserts the `Transactions` row by stable
+   transaction ID, so repeated syncs or update events do not duplicate rows.
+5. On success, PostgreSQL advances `last_synced_event_id`, sets
+   `last_synced_at`, and clears `last_error`.
+6. On Google Sheets failure, the already committed database transaction remains
+   unchanged and PostgreSQL records `last_error` for retry and inspection.
+
+This path is strictly database -> Google Sheets. Manual sheet edits are never
+read back as transaction input.
 
 ## Component Responsibilities
 
@@ -273,6 +293,35 @@ The backfill command lives in
 The verification command lives in `scripts/verify_postgres_backfill.py`.
 Operational steps are documented in `docs/postgres-backfill-cutover.md`.
 
+### Google Sheets Export Sync
+
+Owns:
+
+- Mapping each internal user to one configured Google spreadsheet through
+  `google_sheet_exports`.
+- Reading committed PostgreSQL transaction events after the per-user sync
+  cursor.
+- Upserting user-facing ledger fields into Google Sheets by transaction ID.
+- Recording `last_synced_event_id`, `last_synced_at`, and `last_error` for
+  retry and inspection.
+
+Does not own:
+
+- Creating or updating database transactions.
+- Treating Google Sheets as authoritative input.
+- Syncing parser internals, raw provider payloads, location context, or source
+  metadata by default.
+- Managing spreadsheet sharing or end-user onboarding UX.
+
+The shared export data contract lives in `core/sheet_export.py`. Sync
+orchestration lives in `core/sheet_export_service.py`. PostgreSQL export config
+and pending event reads live in
+`integrations/postgres/sheet_export_repository.py`. The Google Sheets projection
+adapter lives in `integrations/google_sheets/ledger_export.py` and writes a
+compact `Transactions` sheet with `id`, date, amount, currency, category,
+merchant, payment method, note, and timestamps. Operators can run
+`scripts/sync_postgres_to_google_sheets.py` manually or from a scheduler.
+
 ### Exchange-Rate Provider
 
 Owns:
@@ -300,6 +349,8 @@ reporting; original transaction amount and currency are never overwritten.
 - Google Sheets owns durable MVP storage when `STORAGE_BACKEND=google_sheets`.
 - PostgreSQL owns durable relational storage when the PostgreSQL repository is
   selected with `STORAGE_BACKEND=postgres`.
+- When PostgreSQL is the source of truth, Google Sheets may own a read-oriented
+  user ledger projection populated only through database -> Google Sheets sync.
 - Exchange-rate conversions are transient reporting data owned by the application service reply path.
 
 Parser results should be treated as untrusted input. The backend must validate every field before writing to storage.
@@ -338,6 +389,9 @@ Required configuration for transaction handling:
 - Google Sheets credentials, Sheet ID, and worksheet name when
   `STORAGE_BACKEND=google_sheets`.
 - PostgreSQL `DATABASE_URL` when `STORAGE_BACKEND=postgres`.
+- Google service account JSON for `sync_postgres_to_google_sheets.py`, plus one
+  enabled `google_sheet_exports` row per user that should receive a Sheets
+  ledger projection.
 - Default timezone.
 - Default currency.
 
@@ -398,6 +452,11 @@ The PostgreSQL repository contract is covered with an in-memory psycopg-like
 connection so atomic create, idempotency lookup, latest lookup, update events,
 monthly queries, schema expectations, and repository failure mapping can be
 tested without real database credentials.
+
+The Google Sheets export sync contract is covered with fake repositories and an
+in-memory Sheets client for per-user spreadsheet routing, transaction-ID
+upserts, user-facing field projection, failure status recording, and
+`google_sheet_exports` migration expectations.
 
 The domain validation contract is covered with unit tests for missing and
 non-positive amounts, timezone-based date defaults, default currency, category

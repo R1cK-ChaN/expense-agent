@@ -220,6 +220,35 @@ Notes:
   but it is appropriate for audit logs because the main query model remains
   normalized.
 
+### google_sheet_exports
+
+Per-user configuration and cursor state for the one-way database -> Google
+Sheets ledger projection.
+
+```sql
+create table google_sheet_exports (
+    user_id uuid primary key references users(id),
+    spreadsheet_id text not null,
+    enabled boolean not null default true,
+    last_synced_event_id uuid references transaction_events(id),
+    last_synced_at timestamptz,
+    last_error text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+```
+
+Notes:
+
+- `user_id` scopes each export to one internal user, preventing one user's
+  transactions from being synced to another user's spreadsheet.
+- `spreadsheet_id` is the Google Sheet used as that user's read-oriented
+  ledger view.
+- `last_synced_event_id` is the retry cursor. Sync failures leave it unchanged
+  so the next run retries the same pending transaction events.
+- `last_error` records the latest sync failure for inspection without rolling
+  back committed transaction writes.
+
 ## Indexes
 
 ```sql
@@ -243,6 +272,10 @@ create index idx_transactions_user_month
 
 create index idx_transaction_events_transaction
     on transaction_events(transaction_id, created_at desc);
+
+create index idx_google_sheet_exports_enabled
+    on google_sheet_exports(enabled)
+    where enabled = true;
 ```
 
 These indexes cover the current product paths:
