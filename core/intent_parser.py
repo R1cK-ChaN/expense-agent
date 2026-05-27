@@ -9,7 +9,12 @@ from enum import StrEnum
 from typing import Protocol
 
 from core.categories import CATEGORY_GUIDANCE, SUPPORTED_CATEGORIES
-from core.currencies import CURRENCY_PROMPT_GUIDANCE, SUPPORTED_CURRENCIES
+from core.currencies import (
+    CURRENCY_ALIASES,
+    CURRENCY_PROMPT_GUIDANCE,
+    SUPPORTED_CURRENCIES,
+    normalize_currency_code,
+)
 
 REQUIRED_TOP_LEVEL_KEYS = frozenset(
     {
@@ -50,6 +55,41 @@ _AMOUNT_CUES = (
     "花了",
     "金额",
 )
+_KNOWN_UNSUPPORTED_ATTACHED_CURRENCY_CODES = frozenset(
+    {
+        "AED",
+        "BRL",
+        "DKK",
+        "MXN",
+        "NOK",
+        "PLN",
+        "RUB",
+        "SAR",
+        "SEK",
+        "ZAR",
+    }
+)
+_ATTACHED_CURRENCY_TOKENS = tuple(
+    sorted(
+        {
+            *SUPPORTED_CURRENCIES,
+            *_KNOWN_UNSUPPORTED_ATTACHED_CURRENCY_CODES,
+            *(alias for alias in CURRENCY_ALIASES if " " not in alias),
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_ATTACHED_CURRENCY_TOKEN_PATTERN = "|".join(
+    re.escape(token) for token in _ATTACHED_CURRENCY_TOKENS
+)
+_ATTACHED_AMOUNT_CURRENCY_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9:/年月日.-])"
+    r"(?P<amount>\d+(?:\.\d+)?)"
+    rf"(?P<currency>{_ATTACHED_CURRENCY_TOKEN_PATTERN})"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 
 
 class ParserIntent(StrEnum):
@@ -87,6 +127,12 @@ class ParsedExpense:
 class MonthlyTotalQuery:
     month: str
     currency: str | None
+
+
+@dataclass(frozen=True)
+class _AttachedAmountCurrency:
+    amount: Decimal
+    currency: str
 
 
 @dataclass(frozen=True)
@@ -208,10 +254,9 @@ class IntentParser:
 
         try:
             payload = json.loads(raw_response)
-            return _backfill_unambiguous_update_amount(
-                text,
-                _parse_payload(payload),
-            )
+            result = _parse_payload(payload)
+            result = _backfill_attached_create_amount_currency(text, result)
+            return _backfill_unambiguous_update_amount(text, result)
         except (TypeError, ValueError, json.JSONDecodeError):
             return IntentParserResult.failure("malformed_llm_output")
 
@@ -249,6 +294,59 @@ def _parse_payload(payload: object) -> IntentParserResult:
         query=_parse_query(payload["query"], intent),
         missing_fields=missing_fields,
     )
+
+
+def _backfill_attached_create_amount_currency(
+    text: str,
+    result: IntentParserResult,
+) -> IntentParserResult:
+    if result.intent is not ParserIntent.CREATE_EXPENSE or result.expense is None:
+        return result
+
+    attached = _attached_amount_currency_from_text(text)
+    if attached is None:
+        return result
+
+    expense = result.expense
+    if expense.amount is not None and expense.amount != attached.amount:
+        return result
+
+    return replace(
+        result,
+        expense=replace(
+            expense,
+            amount=expense.amount or attached.amount,
+            currency=attached.currency,
+        ),
+        missing_fields=tuple(
+            field
+            for field in result.missing_fields
+            if field not in {"amount", "currency"}
+        ),
+    )
+
+
+def _attached_amount_currency_from_text(
+    text: str,
+) -> _AttachedAmountCurrency | None:
+    matches = list(_ATTACHED_AMOUNT_CURRENCY_PATTERN.finditer(text))
+    if len(matches) != 1:
+        return None
+
+    match = matches[0]
+    try:
+        amount = Decimal(match.group("amount"))
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount <= 0:
+        return None
+
+    currency_text = match.group("currency")
+    currency = normalize_currency_code(currency_text)
+    if currency is None:
+        currency = currency_text.upper()
+
+    return _AttachedAmountCurrency(amount=amount, currency=currency)
 
 
 def _backfill_unambiguous_update_amount(

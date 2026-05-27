@@ -5,6 +5,7 @@ import pytest
 
 from app.telegram_webhook import TelegramInboundMessage
 from core.intent_parser import (
+    IntentParser,
     IntentParserResult,
     MonthlyTotalQuery,
     ParsedExpense,
@@ -157,6 +158,46 @@ def test_create_expense_records_product_with_spec_numbers():
             category="数码",
             merchant="ipad pro 13inch",
             note="ipad pro 13inch",
+        )
+    ]
+
+
+def test_create_expense_records_attached_rmb_amount_as_cny():
+    parser = IntentParser(
+        llm_client=FakeLLMClient(
+            {
+                "intent": "create_expense",
+                "confidence": 0.86,
+                "expense": {
+                    "date": "2026-05-20",
+                    "amount": None,
+                    "currency": "SGD",
+                    "category": "餐饮",
+                    "merchant": None,
+                    "payment_method": None,
+                    "note": "咖啡粉",
+                },
+                "update_fields": {},
+                "query": None,
+                "missing_fields": ["amount"],
+            }
+        )
+    )
+    repository = FakeTransactionRepository()
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(text="@expenseBillingBot 咖啡粉 123rmb")
+    )
+
+    assert reply == "已记录：2026-05-20 餐饮 123 CNY 咖啡粉"
+    assert repository.appended_records == [
+        make_record(
+            transaction_id="txn-1",
+            amount=Decimal("123"),
+            currency="CNY",
+            merchant=None,
+            note="咖啡粉",
         )
     ]
 
@@ -856,6 +897,16 @@ class FakeParser:
     def parse(self, text: str, *, context: ParserContext) -> IntentParserResult:
         self.calls.append((text, context))
         return self._result
+
+
+class FakeLLMClient:
+    def __init__(self, response: dict[str, object]) -> None:
+        self._response = response
+
+    def complete_json(self, *, system_prompt: str, user_prompt: str) -> str:
+        import json
+
+        return json.dumps(self._response)
 
 
 class FakeTransactionRepository:
