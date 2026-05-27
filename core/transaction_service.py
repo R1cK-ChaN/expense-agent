@@ -1,11 +1,18 @@
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from core.currencies import normalize_currency_code
+from core.exchange_rates import (
+    ExchangeRateConversion,
+    ExchangeRateProvider,
+    ExchangeRateProviderError,
+)
 from core.intent_parser import IntentParserResult, ParserContext, ParserIntent
 from core.validator import (
     ValidationContext,
@@ -26,6 +33,7 @@ UNKNOWN_INTENT_MESSAGE = (
 )
 LOW_CONFIDENCE_MESSAGE = "这条消息我不太确定，请换个说法或补充金额、商家。"
 PROCESSING_FAILURE_MESSAGE = "抱歉，暂时没能记账，请稍后再试。"
+EXCHANGE_RATE_FAILURE_MESSAGE = "抱歉，暂时没能取得汇率，请稍后再试。"
 NO_RECENT_EXPENSE_MESSAGE = "我还没有找到你最近的支出记录。"
 MIN_CREATE_EXPENSE_CONFIDENCE = 0.7
 MIN_UPDATE_EXPENSE_CONFIDENCE = 0.7
@@ -82,14 +90,20 @@ class TransactionRepository(Protocol):
     ) -> TransactionRecord:
         raise NotImplementedError
 
-    def sum_monthly_expense(
+    def list_monthly_expenses(
         self,
         *,
         user_id: str,
         month: str,
-        currency: str,
-    ) -> Decimal:
+    ) -> list[TransactionRecord]:
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class _MonthlyTotalSummary:
+    total: Decimal
+    currency: str
+    conversions: tuple[ExchangeRateConversion, ...]
 
 
 class CreateExpenseValidator(Protocol):
@@ -119,6 +133,7 @@ class TransactionService:
         *,
         parser: ExpenseIntentParser,
         repository: TransactionRepository,
+        exchange_rate_provider: ExchangeRateProvider | None = None,
         timezone: str,
         default_currency: str,
         validator: CreateExpenseValidator = validate_create_expense,
@@ -128,6 +143,7 @@ class TransactionService:
     ) -> None:
         self._parser = parser
         self._repository = repository
+        self._exchange_rate_provider = exchange_rate_provider
         self._timezone = timezone
         self._default_currency = default_currency
         self._validator = validator
@@ -277,22 +293,38 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
 
         current_month = _message_month(message.received_at, self._timezone)
-        currency = _normalize_currency(self._default_currency)
-        query_currency = _normalize_currency(query.currency or self._default_currency)
+        currency = normalize_currency_code(self._default_currency)
+        query_currency = normalize_currency_code(
+            query.currency,
+            default_currency=self._default_currency,
+        )
+        if currency is None:
+            return PROCESSING_FAILURE_MESSAGE
+        if query_currency is None:
+            return _format_unsupported_monthly_total_reply(currency)
         if query.month != current_month or query_currency != currency:
             return _format_unsupported_monthly_total_reply(currency)
 
         try:
-            total = self._repository.sum_monthly_expense(
+            records = self._repository.list_monthly_expenses(
                 user_id=message.telegram_user_id,
                 month=current_month,
-                currency=currency,
             )
         except TransactionRepositoryError:
-            logger.exception("Failed to sum monthly expense.")
+            logger.exception("Failed to list monthly expenses.")
             return PROCESSING_FAILURE_MESSAGE
 
-        return _format_monthly_total_reply(total, currency)
+        try:
+            summary = _summarize_monthly_records(
+                records,
+                currency=currency,
+                exchange_rate_provider=self._exchange_rate_provider,
+            )
+        except ExchangeRateProviderError:
+            logger.exception("Failed to convert monthly expenses.")
+            return EXCHANGE_RATE_FAILURE_MESSAGE
+
+        return _format_monthly_total_reply(summary)
 
     def _new_transaction_record(
         self,
@@ -329,9 +361,23 @@ def _format_update_confirmation(record: TransactionRecord) -> str:
     return "已更新：" + _format_record_summary(record)
 
 
-def _format_monthly_total_reply(total: Decimal, currency: str) -> str:
-    amount = total.quantize(MONTHLY_TOTAL_AMOUNT_QUANTUM)
-    return f"本月支出合计：{amount:f} {currency}"
+def _format_monthly_total_reply(summary: _MonthlyTotalSummary) -> str:
+    amount = _format_money(summary.total)
+    reply = f"本月支出合计：{amount} {summary.currency}"
+    if not summary.conversions:
+        return reply
+
+    conversion_parts = [
+        (
+            f"{format(conversion.original_amount, 'f')} "
+            f"{conversion.original_currency} -> "
+            f"{_format_money(conversion.converted_amount)} "
+            f"{conversion.converted_currency} "
+            f"(汇率日 {conversion.rate_date})"
+        )
+        for conversion in summary.conversions
+    ]
+    return reply + "\n其中换算：" + "; ".join(conversion_parts)
 
 
 def _format_unsupported_monthly_total_reply(currency: str) -> str:
@@ -362,8 +408,44 @@ def _message_month(timestamp: datetime, timezone_name: str) -> str:
     return _message_date(timestamp, timezone_name).strftime("%Y-%m")
 
 
-def _normalize_currency(currency: str) -> str:
-    return currency.strip().upper()
+def _summarize_monthly_records(
+    records: list[TransactionRecord],
+    *,
+    currency: str,
+    exchange_rate_provider: ExchangeRateProvider | None,
+) -> _MonthlyTotalSummary:
+    total = Decimal("0")
+    conversions: list[ExchangeRateConversion] = []
+    for record in records:
+        record_currency = normalize_currency_code(record.currency)
+        if record_currency is None:
+            raise ExchangeRateProviderError(
+                f"Unsupported stored currency: {record.currency}"
+            )
+        if record_currency == currency:
+            total += record.amount
+            continue
+        if exchange_rate_provider is None:
+            raise ExchangeRateProviderError("Exchange-rate provider is not configured.")
+
+        conversion = exchange_rate_provider.convert(
+            record.amount,
+            from_currency=record_currency,
+            to_currency=currency,
+            date=record.date,
+        )
+        total += conversion.converted_amount
+        conversions.append(conversion)
+
+    return _MonthlyTotalSummary(
+        total=total,
+        currency=currency,
+        conversions=tuple(conversions),
+    )
+
+
+def _format_money(amount: Decimal) -> str:
+    return format(amount.quantize(MONTHLY_TOTAL_AMOUNT_QUANTUM), "f")
 
 
 def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:

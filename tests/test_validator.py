@@ -7,6 +7,7 @@ from core.intent_parser import IntentParserResult, ParsedExpense, ParserIntent
 from core.validator import (
     DEFAULT_EXPENSE_CATEGORY,
     INVALID_AMOUNT_MESSAGE,
+    INVALID_CURRENCY_MESSAGE,
     INVALID_DATE_MESSAGE,
     MISSING_AMOUNT_MESSAGE,
     MULTIPLE_EXPENSES_MESSAGE,
@@ -66,6 +67,52 @@ def test_validation_defaults_missing_currency_to_sgd():
     assert result.is_valid is True
     assert result.expense is not None
     assert result.expense.currency == "SGD"
+
+
+def test_validation_preserves_supported_foreign_currency():
+    result = validate_create_expense(
+        make_parser_result(currency="cny"),
+        context=make_context(default_currency="SGD"),
+    )
+
+    assert result.is_valid is True
+    assert result.expense is not None
+    assert result.expense.currency == "CNY"
+
+
+@pytest.mark.parametrize(
+    ("currency", "expected"),
+    [
+        ("人民币", "CNY"),
+        ("rmb", "CNY"),
+        ("美金", "USD"),
+        ("新币", "SGD"),
+    ],
+)
+def test_validation_normalizes_mainstream_currency_aliases(
+    currency: str,
+    expected: str,
+):
+    result = validate_create_expense(
+        make_parser_result(currency=currency),
+        context=make_context(default_currency="SGD"),
+    )
+
+    assert result.is_valid is True
+    assert result.expense is not None
+    assert result.expense.currency == expected
+
+
+def test_validation_rejects_unsupported_currency_code():
+    result = validate_create_expense(
+        make_parser_result(currency="ABC"),
+        context=make_context(default_currency="SGD"),
+    )
+
+    assert result.is_valid is False
+    assert result.expense is None
+    assert result.user_message == INVALID_CURRENCY_MESSAGE
+    assert result.errors[0].code is ValidationErrorCode.INVALID_CURRENCY
 
 
 @pytest.mark.parametrize("category", [None, "餐厅"])

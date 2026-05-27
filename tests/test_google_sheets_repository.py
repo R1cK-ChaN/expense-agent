@@ -339,6 +339,90 @@ def test_sum_monthly_expense_filters_user_type_month_and_currency():
     ) == Decimal("12.75")
 
 
+def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            make_row(
+                transaction_id="sgd-1",
+                telegram_user_id="42",
+                amount="10.50",
+                currency="SGD",
+                transaction_type="expense",
+                date="2026-05-01",
+            ),
+            make_row(
+                transaction_id="income",
+                telegram_user_id="42",
+                amount="99.00",
+                currency="SGD",
+                transaction_type="income",
+                date="2026-05-02",
+            ),
+            make_row(
+                transaction_id="april",
+                telegram_user_id="42",
+                amount="4.00",
+                currency="SGD",
+                transaction_type="expense",
+                date="2026-04-30",
+            ),
+            make_row(
+                transaction_id="other-user",
+                telegram_user_id="7",
+                amount="8.00",
+                currency="SGD",
+                transaction_type="expense",
+                date="2026-05-03",
+            ),
+            make_row(
+                transaction_id="usd",
+                telegram_user_id="42",
+                amount="6.00",
+                currency="USD",
+                transaction_type="expense",
+                date="2026-05-04",
+            ),
+            make_row(
+                transaction_id="cny",
+                telegram_user_id="42",
+                amount="30.00",
+                currency="CNY",
+                transaction_type="expense",
+                date="2026-05-05",
+            ),
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    records = repository.list_monthly_expenses(
+        user_id="42",
+        month="2026-05",
+    )
+
+    assert [(record.id, record.amount, record.currency) for record in records] == [
+        ("sgd-1", Decimal("10.50"), "SGD"),
+        ("usd", Decimal("6.00"), "USD"),
+        ("cny", Decimal("30.00"), "CNY"),
+    ]
+
+
+def test_list_monthly_expenses_rejects_non_padded_month():
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=InMemorySheetsClient(),
+    )
+
+    with pytest.raises(ValueError, match="YYYY-MM"):
+        repository.list_monthly_expenses(
+            user_id="42",
+            month="2026-5",
+        )
+
+
 def test_sum_monthly_expense_rejects_non_padded_month():
     repository = GoogleSheetsTransactionRepository(
         sheet_id="sheet-1",

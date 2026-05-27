@@ -11,7 +11,9 @@ from core.intent_parser import (
     ParserContext,
     ParserIntent,
 )
+from core.exchange_rates import ExchangeRateConversion, ExchangeRateProviderError
 from core.transaction_service import (
+    EXCHANGE_RATE_FAILURE_MESSAGE,
     LOW_CONFIDENCE_MESSAGE,
     NO_RECENT_EXPENSE_MESSAGE,
     PROCESSING_FAILURE_MESSAGE,
@@ -478,14 +480,17 @@ def test_google_sheets_update_failure_returns_fallback():
 def test_query_monthly_total_returns_current_user_sgd_total(text: str):
     parser = FakeParser(make_query_parser_result())
     repository = FakeTransactionRepository(
-        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+        monthly_records=[
+            make_record(transaction_id="txn-a", amount=Decimal("120")),
+            make_record(transaction_id="txn-b", amount=Decimal("3.4")),
+        ]
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(make_message(text=text))
 
     assert reply == "本月支出合计：123.40 SGD"
-    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.list_monthly_calls == [("42", "2026-05")]
     assert repository.appended_records == []
     assert repository.update_calls == []
 
@@ -493,7 +498,7 @@ def test_query_monthly_total_returns_current_user_sgd_total(text: str):
 def test_query_monthly_total_uses_message_timezone_for_current_month():
     parser = FakeParser(make_query_parser_result(month="2026-05", currency="SGD"))
     repository = FakeTransactionRepository(
-        monthly_totals={("42", "2026-05", "SGD"): Decimal("8.8")}
+        monthly_records=[make_record(amount=Decimal("8.8"))]
     )
     service = make_service(parser=parser, repository=repository)
 
@@ -505,46 +510,109 @@ def test_query_monthly_total_uses_message_timezone_for_current_month():
     )
 
     assert reply == "本月支出合计：8.80 SGD"
-    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.list_monthly_calls == [("42", "2026-05")]
 
 
 def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
     parser = FakeParser(make_query_parser_result(currency=None))
     repository = FakeTransactionRepository(
-        monthly_totals={("42", "2026-05", "SGD"): Decimal("11")}
+        monthly_records=[make_record(amount=Decimal("11"))]
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == "本月支出合计：11.00 SGD"
-    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.list_monthly_calls == [("42", "2026-05")]
+
+
+def test_query_monthly_total_converts_mixed_currencies_to_sgd():
+    parser = FakeParser(make_query_parser_result())
+    repository = FakeTransactionRepository(
+        monthly_records=[
+            make_record(
+                transaction_id="sgd",
+                date="2026-05-01",
+                amount=Decimal("10"),
+                currency="SGD",
+            ),
+            make_record(
+                transaction_id="cny",
+                date="2026-05-02",
+                amount=Decimal("30"),
+                currency="CNY",
+            ),
+            make_record(
+                transaction_id="usd",
+                date="2026-05-03",
+                amount=Decimal("5"),
+                currency="USD",
+            ),
+        ]
+    )
+    exchange_rate_provider = FakeExchangeRateProvider(
+        rates={
+            ("CNY", "SGD", "2026-05-02"): (Decimal("0.18"), "2026-05-02"),
+            ("USD", "SGD", "2026-05-03"): (Decimal("1.35"), "2026-05-02"),
+        }
+    )
+    service = make_service(
+        parser=parser,
+        repository=repository,
+        exchange_rate_provider=exchange_rate_provider,
+    )
+
+    reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
+
+    assert reply == (
+        "本月支出合计：22.15 SGD\n"
+        "其中换算：30 CNY -> 5.40 SGD (汇率日 2026-05-02); "
+        "5 USD -> 6.75 SGD (汇率日 2026-05-02)"
+    )
+    assert repository.list_monthly_calls == [("42", "2026-05")]
+    assert exchange_rate_provider.calls == [
+        (Decimal("30"), "CNY", "SGD", "2026-05-02"),
+        (Decimal("5"), "USD", "SGD", "2026-05-03"),
+    ]
 
 
 def test_query_monthly_total_rejects_non_current_month_without_storage_lookup():
     parser = FakeParser(make_query_parser_result(month="2026-04", currency="SGD"))
     repository = FakeTransactionRepository(
-        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+        monthly_records=[make_record(amount=Decimal("123.4"))]
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(make_message(text="上个月花了多少？"))
 
     assert reply == "我目前只支持查询本月 SGD 支出总额。"
-    assert repository.sum_monthly_calls == []
+    assert repository.list_monthly_calls == []
 
 
 def test_query_monthly_total_rejects_non_sgd_currency_without_storage_lookup():
     parser = FakeParser(make_query_parser_result(month="2026-05", currency="USD"))
     repository = FakeTransactionRepository(
-        monthly_totals={("42", "2026-05", "SGD"): Decimal("123.4")}
+        monthly_records=[make_record(amount=Decimal("123.4"))]
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(make_message(text="这个月 USD 花了多少？"))
 
     assert reply == "我目前只支持查询本月 SGD 支出总额。"
-    assert repository.sum_monthly_calls == []
+    assert repository.list_monthly_calls == []
+
+
+def test_query_monthly_total_rejects_unsupported_currency_without_storage_lookup():
+    parser = FakeParser(make_query_parser_result(month="2026-05", currency="ABC"))
+    repository = FakeTransactionRepository(
+        monthly_records=[make_record(amount=Decimal("123.4"))]
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="这个月 ABC 花了多少？"))
+
+    assert reply == "我目前只支持查询本月 SGD 支出总额。"
+    assert repository.list_monthly_calls == []
 
 
 def test_query_monthly_total_formats_zero_sgd_total():
@@ -555,28 +623,55 @@ def test_query_monthly_total_formats_zero_sgd_total():
     reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
 
     assert reply == "本月支出合计：0.00 SGD"
-    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.list_monthly_calls == [("42", "2026-05")]
 
 
 def test_query_monthly_total_repository_failure_returns_fallback():
     parser = FakeParser(make_query_parser_result())
-    repository = FakeTransactionRepository(fail_sum_monthly=True)
+    repository = FakeTransactionRepository(fail_list_monthly=True)
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == PROCESSING_FAILURE_MESSAGE
-    assert repository.sum_monthly_calls == [("42", "2026-05", "SGD")]
+    assert repository.list_monthly_calls == [("42", "2026-05")]
+
+
+def test_query_monthly_total_exchange_rate_failure_returns_fallback():
+    parser = FakeParser(make_query_parser_result())
+    repository = FakeTransactionRepository(
+        monthly_records=[
+            make_record(
+                transaction_id="cny",
+                date="2026-05-02",
+                amount=Decimal("30"),
+                currency="CNY",
+            )
+        ]
+    )
+    exchange_rate_provider = FakeExchangeRateProvider(fail=True)
+    service = make_service(
+        parser=parser,
+        repository=repository,
+        exchange_rate_provider=exchange_rate_provider,
+    )
+
+    reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
+
+    assert reply == EXCHANGE_RATE_FAILURE_MESSAGE
+    assert repository.list_monthly_calls == [("42", "2026-05")]
 
 
 def make_service(
     *,
     parser: "FakeParser",
     repository: "FakeTransactionRepository",
+    exchange_rate_provider: "FakeExchangeRateProvider | None" = None,
 ) -> TransactionService:
     return TransactionService(
         parser=parser,
         repository=repository,
+        exchange_rate_provider=exchange_rate_provider or FakeExchangeRateProvider(),
         timezone="Asia/Singapore",
         default_currency="SGD",
         clock=lambda: datetime(2026, 5, 20, 5, 0, tzinfo=timezone.utc),
@@ -739,26 +834,26 @@ class FakeTransactionRepository:
         *,
         existing_record: TransactionRecord | None = None,
         latest_records: dict[str, TransactionRecord] | None = None,
-        monthly_totals: dict[tuple[str, str, str], Decimal] | None = None,
+        monthly_records: list[TransactionRecord] | None = None,
         fail_append: bool = False,
         fail_update: bool = False,
-        fail_sum_monthly: bool = False,
+        fail_list_monthly: bool = False,
     ) -> None:
         self._existing_record = existing_record
         self._latest_records = latest_records or {}
         self._records_by_id = {
             record.id: record for record in self._latest_records.values()
         }
-        self._monthly_totals = monthly_totals or {}
+        self._monthly_records = monthly_records or []
         self._fail_append = fail_append
         self._fail_update = fail_update
-        self._fail_sum_monthly = fail_sum_monthly
+        self._fail_list_monthly = fail_list_monthly
         self.find_calls: list[tuple[str, str, str]] = []
         self.latest_calls: list[str] = []
         self.appended_records: list[TransactionRecord] = []
         self.update_calls: list[tuple[str, dict[str, object]]] = []
         self.updated_records: list[TransactionRecord] = []
-        self.sum_monthly_calls: list[tuple[str, str, str]] = []
+        self.list_monthly_calls: list[tuple[str, str]] = []
 
     def set_latest_record(self, user_id: str, record: TransactionRecord) -> None:
         self._latest_records[user_id] = record
@@ -808,15 +903,47 @@ class FakeTransactionRepository:
         self.updated_records.append(updated_record)
         return updated_record
 
-    def sum_monthly_expense(
+    def list_monthly_expenses(
         self,
         *,
         user_id: str,
         month: str,
-        currency: str,
-    ) -> Decimal:
-        self.sum_monthly_calls.append((user_id, month, currency))
-        if self._fail_sum_monthly:
-            raise TransactionRepositoryError("sum failed")
+    ) -> list[TransactionRecord]:
+        self.list_monthly_calls.append((user_id, month))
+        if self._fail_list_monthly:
+            raise TransactionRepositoryError("list failed")
 
-        return self._monthly_totals.get((user_id, month, currency), Decimal("0"))
+        return list(self._monthly_records)
+
+
+class FakeExchangeRateProvider:
+    def __init__(
+        self,
+        *,
+        rates: dict[tuple[str, str, str], tuple[Decimal, str]] | None = None,
+        fail: bool = False,
+    ) -> None:
+        self._rates = rates or {}
+        self._fail = fail
+        self.calls: list[tuple[Decimal, str, str, str]] = []
+
+    def convert(
+        self,
+        amount: Decimal,
+        *,
+        from_currency: str,
+        to_currency: str,
+        date: str,
+    ) -> ExchangeRateConversion:
+        self.calls.append((amount, from_currency, to_currency, date))
+        if self._fail:
+            raise ExchangeRateProviderError("rate unavailable")
+        rate, rate_date = self._rates[(from_currency, to_currency, date)]
+        return ExchangeRateConversion(
+            original_amount=amount,
+            original_currency=from_currency,
+            converted_amount=amount * rate,
+            converted_currency=to_currency,
+            rate=rate,
+            rate_date=rate_date,
+        )
