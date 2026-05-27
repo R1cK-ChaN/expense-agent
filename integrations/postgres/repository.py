@@ -297,6 +297,17 @@ class PostgresTransactionRepository:
                 total += record.amount
         return total
 
+    def list_transactions(self) -> list[TransactionRecord]:
+        try:
+            with self._connection_factory() as connection:
+                rows = connection.execute(SELECT_ALL_TRANSACTIONS_SQL).fetchall()
+        except Exception as error:
+            raise TransactionRepositoryError(
+                "Failed to list transactions from PostgreSQL."
+            ) from error
+
+        return [_row_to_record(row, self._timezone) for row in rows]
+
     def _get_or_create_identity(
         self,
         connection: PostgresConnection,
@@ -709,6 +720,24 @@ where request_ui.platform = %(platform)s
   and t.transaction_type = 'expense'
   and t.transaction_date >= %(month_start)s
   and t.transaction_date < %(month_end)s
+order by t.transaction_date asc, t.created_at asc, t.id asc
+"""
+
+
+SELECT_ALL_TRANSACTIONS_SQL = f"""
+-- postgres_repository.select_all_transactions
+select
+{RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK}
+from transactions t
+left join inbound_messages m on m.id = t.created_from_message_id
+left join user_identities source_ui on source_ui.id = m.identity_id
+left join lateral (
+    select *
+    from user_identities
+    where user_id = t.user_id
+    order by created_at asc, id asc
+    limit 1
+) fallback_ui on true
 order by t.transaction_date asc, t.created_at asc, t.id asc
 """
 

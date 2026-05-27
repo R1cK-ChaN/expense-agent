@@ -246,6 +246,9 @@ class GoogleSheetsTransactionRepository:
             )
         ]
 
+    def list_transactions(self) -> list[TransactionRecord]:
+        return [record for _row_number, record in self._load_records()]
+
     def _load_records(self) -> list[tuple[int, TransactionRecord]]:
         rows = self._load_validated_rows()
 

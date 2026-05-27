@@ -306,6 +306,21 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
     ]
 
 
+def test_list_transactions_returns_all_records_for_backfill_verification():
+    database = InMemoryPostgresDatabase()
+    repository = make_repository(database)
+    repository.append_transaction(
+        make_record(transaction_id="txn-1", source_message_id="9001")
+    )
+    repository.append_transaction(
+        make_record(transaction_id="txn-2", source_message_id="9002")
+    )
+
+    records = repository.list_transactions()
+
+    assert [record.id for record in records] == ["txn-1", "txn-2"]
+
+
 def test_list_monthly_expenses_rejects_non_padded_month():
     repository = make_repository(InMemoryPostgresDatabase())
 
@@ -748,6 +763,17 @@ class InMemoryPostgresConnection:
             and params["month_start"]
             <= transaction["transaction_date"]
             < params["month_end"]
+        ]
+        rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
+        return rows
+
+    def _postgres_repository_select_all_transactions(
+        self,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows = [
+            self._transaction_row(transaction)
+            for transaction in self.database.transactions.values()
         ]
         rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
         return rows

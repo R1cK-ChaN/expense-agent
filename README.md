@@ -39,6 +39,8 @@ for the default path, or `STORAGE_BACKEND=postgres` with `DATABASE_URL` for
 PostgreSQL. Switching back to `google_sheets` restores the spreadsheet path
 without code changes. Google Sheets setup for the MVP storage template is
 documented in `docs/google-sheets-template.md`.
+The Google Sheets to PostgreSQL backfill, verification, production cutover, and
+rollback runbook is documented in `docs/postgres-backfill-cutover.md`.
 
 ## Deployment
 
