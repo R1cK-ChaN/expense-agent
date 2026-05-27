@@ -164,6 +164,7 @@ Stores the current state of each accepted expense.
 ```sql
 create table transactions (
     id uuid primary key,
+    external_id text not null unique,
     user_id uuid not null references users(id),
     created_from_message_id uuid references inbound_messages(id),
     transaction_date date not null,
@@ -183,6 +184,9 @@ create table transactions (
 
 Notes:
 
+- `id` is the internal database key. `external_id` preserves the existing
+  domain-facing `TransactionRecord.id` value used by the application service
+  and Google Sheets repository, including non-UUID values such as `txn-...`.
 - `created_from_message_id` is nullable only to make legacy Google Sheets imports
   straightforward. New bot-created rows should always set it.
 - Source platform, source user, chat, and message IDs are not duplicated here.

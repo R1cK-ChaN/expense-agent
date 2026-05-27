@@ -8,6 +8,7 @@ Expense Agent has five primary boundaries:
 - Backend services own orchestration, validation, persistence decisions, and replies.
 - The LLM is parser-only and returns structured intent.
 - Google Sheets is the MVP storage system.
+- PostgreSQL is the durable storage target behind the same repository boundary.
 - The exchange-rate provider supplies deterministic historical rates for reporting.
 
 The backend is the only component allowed to decide whether data is valid, whether storage should change, and what IM reply should be sent.
@@ -206,6 +207,34 @@ Application services depend on `GoogleSheetsTransactionRepository` and its
 The concrete `GoogleSheetsValuesClient` wraps the Sheets `spreadsheets().values()`
 API for row reads, appends, and updates.
 
+### PostgreSQL Repository
+
+Owns:
+
+- Persisting inbound message idempotency rows, current transaction rows, and
+  transaction audit events in one database transaction for creates.
+- Mapping provider identities to internal users.
+- Looking up transactions by source message, latest user expense, and monthly
+  expense date ranges.
+- Updating supported transaction fields and appending an update audit event in
+  one database transaction.
+- Preserving the existing domain-facing `TransactionRecord.id` through the
+  `transactions.external_id` column while keeping UUIDs as internal database
+  keys.
+- Translating database failures into repository errors.
+
+Does not own:
+
+- Runtime backend selection.
+- Natural-language parsing.
+- IM reply formatting.
+- Google Sheets data backfill.
+
+The implementation lives in `integrations/postgres/repository.py`. It keeps SQL
+inside the PostgreSQL integration module and implements the same repository
+contract used by `TransactionService`; production runtime wiring remains on the
+Google Sheets repository until a later backend-switch issue.
+
 ### Exchange-Rate Provider
 
 Owns:
@@ -230,7 +259,10 @@ reporting; original transaction amount and currency are never overwritten.
 - Raw IM text is owned by the provider adapter until it is handed to the application service.
 - Parsed intent is owned by the parser port as an untrusted proposal.
 - Validated transaction state is owned by the application service and persisted through the repository.
-- Google Sheets owns durable MVP storage after a write succeeds.
+- Google Sheets owns durable MVP storage after a write succeeds in current
+  runtime wiring.
+- PostgreSQL owns durable relational storage when the PostgreSQL repository is
+  selected by future runtime wiring.
 - Exchange-rate conversions are transient reporting data owned by the application service reply path.
 
 Parser results should be treated as untrusted input. The backend must validate every field before writing to storage.
@@ -316,6 +348,11 @@ reply XML.
 The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
 provider failure mapping can be tested without real credentials.
+
+The PostgreSQL repository contract is covered with an in-memory psycopg-like
+connection so atomic create, idempotency lookup, latest lookup, update events,
+monthly queries, schema expectations, and repository failure mapping can be
+tested without real database credentials.
 
 The domain validation contract is covered with unit tests for missing and
 non-positive amounts, timezone-based date defaults, default currency, category

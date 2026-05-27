@@ -23,7 +23,14 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["app", "config", "core", "integrations", "integrations.google_sheets"]
+packages = [
+    "app",
+    "config",
+    "core",
+    "integrations",
+    "integrations.google_sheets",
+    "integrations.postgres",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
