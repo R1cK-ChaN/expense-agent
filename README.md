@@ -2,7 +2,10 @@
 
 Telegram Expense Agent MVP.
 
-Users send natural-language expense messages to a Telegram bot. The backend parses, validates, stores transactions in Google Sheets, and replies with a confirmation.
+Users send natural-language expense messages to a Telegram bot. The backend
+parses, validates, stores transactions in the configured repository, and replies
+with a confirmation. Google Sheets remains the default storage backend;
+PostgreSQL can be selected with runtime configuration.
 
 Development follows the GitHub issues in this repository and uses TDD for implementation slices.
 
@@ -28,9 +31,14 @@ Run the local FastAPI service:
 uvicorn app.main:app --reload
 ```
 
-Copy `.env.example` for local configuration. The health endpoint imports and runs without real external credentials.
+Copy `.env.example` for local configuration. The health endpoint imports and
+runs without real external credentials.
 
-Google Sheets setup for the MVP storage template is documented in `docs/google-sheets-template.md`.
+Set `STORAGE_BACKEND=google_sheets` with Google credentials and sheet settings
+for the default path, or `STORAGE_BACKEND=postgres` with `DATABASE_URL` for
+PostgreSQL. Switching back to `google_sheets` restores the spreadsheet path
+without code changes. Google Sheets setup for the MVP storage template is
+documented in `docs/google-sheets-template.md`.
 
 ## Deployment
 

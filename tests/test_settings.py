@@ -9,6 +9,7 @@ def test_settings_track_required_secret_environment_names():
         "WECHAT_TOKEN",
         "PARSER_API_KEY",
         "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "DATABASE_URL",
     )
 
 
@@ -16,6 +17,14 @@ def test_settings_default_to_canonical_transactions_sheet_name():
     settings = load_settings({})
 
     assert settings.google_worksheet_name == TRANSACTIONS_SHEET_NAME
+
+
+def test_settings_default_to_google_sheets_storage_backend():
+    settings = load_settings({})
+
+    assert settings.storage_backend == "google_sheets"
+    assert settings.database_url is None
+    assert settings.public_dict()["storage_backend"] == "google_sheets"
 
 
 def test_settings_do_not_expose_secret_values():
@@ -26,6 +35,7 @@ def test_settings_do_not_expose_secret_values():
             "WECHAT_TOKEN": "wechat-secret",
             "PARSER_API_KEY": "parser-secret",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "google-secret",
+            "DATABASE_URL": "postgres://user:password@localhost/db",
         }
     )
 
@@ -36,12 +46,14 @@ def test_settings_do_not_expose_secret_values():
     assert "wechat-secret" not in repr(public_settings)
     assert "parser-secret" not in repr(public_settings)
     assert "google-secret" not in repr(public_settings)
+    assert "postgres://user:password@localhost/db" not in repr(public_settings)
     assert public_settings["secrets"] == {
         "TELEGRAM_BOT_TOKEN": "<set>",
         "TELEGRAM_WEBHOOK_SECRET": "<set>",
         "WECHAT_TOKEN": "<set>",
         "PARSER_API_KEY": "<set>",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "<set>",
+        "DATABASE_URL": "<set>",
     }
 
 
@@ -53,6 +65,7 @@ def test_settings_repr_does_not_expose_secret_values():
             "WECHAT_TOKEN": "wechat-secret",
             "PARSER_API_KEY": "parser-secret",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "google-secret",
+            "DATABASE_URL": "postgres://user:password@localhost/db",
         }
     )
 
@@ -63,6 +76,21 @@ def test_settings_repr_does_not_expose_secret_values():
     assert "wechat-secret" not in settings_repr
     assert "parser-secret" not in settings_repr
     assert "google-secret" not in settings_repr
+    assert "postgres://user:password@localhost/db" not in settings_repr
+
+
+def test_settings_load_storage_backend_and_database_url():
+    settings = load_settings(
+        {
+            "STORAGE_BACKEND": "postgres",
+            "DATABASE_URL": "postgres://user:password@localhost/db",
+        }
+    )
+
+    assert settings.storage_backend == "postgres"
+    assert settings.database_url == "postgres://user:password@localhost/db"
+    assert settings.public_dict()["storage_backend"] == "postgres"
+    assert settings.public_dict()["secrets"]["DATABASE_URL"] == "<set>"
 
 
 def test_settings_load_telegram_bot_token_without_public_exposure():
@@ -97,10 +125,12 @@ def test_blank_optional_environment_values_are_unconfigured():
             "PARSER_API_KEY": "",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "",
             "GOOGLE_SHEET_ID": "",
+            "DATABASE_URL": "",
         }
     )
 
     assert settings.google_sheet_id is None
+    assert settings.database_url is None
     assert settings.public_dict()["google_sheet_id_configured"] is False
     assert settings.public_dict()["secrets"] == {
         "TELEGRAM_BOT_TOKEN": "<unset>",
@@ -108,6 +138,7 @@ def test_blank_optional_environment_values_are_unconfigured():
         "WECHAT_TOKEN": "<unset>",
         "PARSER_API_KEY": "<unset>",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "<unset>",
+        "DATABASE_URL": "<unset>",
     }
 
 

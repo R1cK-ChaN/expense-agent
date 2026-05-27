@@ -127,9 +127,12 @@ Duplicate provider retries return the stored transaction confirmation without a
 second append.
 
 `app/main.py` wires this service as the default Telegram and WeChat text
-handler when the parser credentials, parser model, Google service account JSON,
-and Google Sheet ID are configured. Without those runtime settings, the app
-still imports and serves health checks without external credentials.
+handler when parser credentials, parser model, and the selected storage backend
+settings are configured. `STORAGE_BACKEND=google_sheets` uses the Google service
+account JSON, Sheet ID, and worksheet settings. `STORAGE_BACKEND=postgres` uses
+`DATABASE_URL` and the PostgreSQL repository. Without the selected backend's
+runtime settings, the app skips transaction handling and still imports and
+serves health checks without external credentials.
 
 ### Domain Validation
 
@@ -232,8 +235,8 @@ Does not own:
 
 The implementation lives in `integrations/postgres/repository.py`. It keeps SQL
 inside the PostgreSQL integration module and implements the same repository
-contract used by `TransactionService`; production runtime wiring remains on the
-Google Sheets repository until a later backend-switch issue.
+contract used by `TransactionService`; production runtime wiring can select it
+with `STORAGE_BACKEND=postgres` and `DATABASE_URL`.
 
 ### Exchange-Rate Provider
 
@@ -259,10 +262,9 @@ reporting; original transaction amount and currency are never overwritten.
 - Raw IM text is owned by the provider adapter until it is handed to the application service.
 - Parsed intent is owned by the parser port as an untrusted proposal.
 - Validated transaction state is owned by the application service and persisted through the repository.
-- Google Sheets owns durable MVP storage after a write succeeds in current
-  runtime wiring.
+- Google Sheets owns durable MVP storage when `STORAGE_BACKEND=google_sheets`.
 - PostgreSQL owns durable relational storage when the PostgreSQL repository is
-  selected by future runtime wiring.
+  selected with `STORAGE_BACKEND=postgres`.
 - Exchange-rate conversions are transient reporting data owned by the application service reply path.
 
 Parser results should be treated as untrusted input. The backend must validate every field before writing to storage.
@@ -291,14 +293,16 @@ User-correctable errors should produce a clear IM reply and no storage mutation.
 
 ## Configuration
 
-Required configuration:
+Required configuration for transaction handling:
 
 - Telegram bot token.
 - Telegram webhook secret token.
 - WeChat Official Account token for callback signature verification.
 - Parser provider credentials and model identifier.
-- Google Sheets credentials.
-- Google Sheet identifier and worksheet name.
+- Storage backend selection. Defaults to `google_sheets`.
+- Google Sheets credentials, Sheet ID, and worksheet name when
+  `STORAGE_BACKEND=google_sheets`.
+- PostgreSQL `DATABASE_URL` when `STORAGE_BACKEND=postgres`.
 - Default timezone.
 - Default currency.
 
@@ -309,6 +313,9 @@ Optional configuration:
 Secrets must come from environment variables or a secret manager. They must not be committed to the repository.
 
 The Google Sheet must contain a worksheet named `Transactions` with the required header row described in `docs/google-sheets-template.md`.
+Changing `STORAGE_BACKEND` back to `google_sheets` restores the previous
+spreadsheet storage path without code changes when the Google runtime settings
+remain available.
 
 ## Delivery
 
@@ -319,7 +326,8 @@ Build, deploy the image to Cloud Run, and check `/health`.
 
 Runtime secret values remain in GCP Secret Manager. The deploy workflow accepts
 only secret names and versions through `CLOUD_RUN_SECRET_MAPPINGS`; it does not
-store Telegram, WeChat, parser, or Google credential values in GitHub.
+store Telegram, WeChat, parser, Google, or database credential values in
+GitHub.
 
 ## Testable Contracts
 
@@ -362,5 +370,6 @@ The create-expense application service contract is covered with fake parser and
 repository tests for successful appends, configured defaults, relative dates,
 missing amount, duplicate provider retries, low-confidence parser output,
 unknown intent, parser failure, and Google Sheets write failure. App bootstrap
-tests also cover the configured runtime wiring from webhook message to sheet
-append and Telegram reply.
+tests also cover Google Sheets and PostgreSQL runtime wiring from webhook
+message to repository append and Telegram reply, plus the safe fallback when the
+selected backend is missing required configuration.

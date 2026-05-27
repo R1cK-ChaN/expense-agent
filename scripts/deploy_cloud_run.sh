@@ -57,16 +57,58 @@ has_mapping_key() {
   return 1
 }
 
+mapping_value() {
+  local mappings="$1"
+  local expected_key="$2"
+  local entry
+  local key
+  local value
+
+  IFS="," read -ra entries <<< "${mappings}"
+  for entry in "${entries[@]}"; do
+    if [[ "${entry}" != *"="* ]]; then
+      continue
+    fi
+
+    key="${entry%%=*}"
+    value="${entry#*=}"
+    if [[ "${key}" == "${expected_key}" ]]; then
+      printf "%s" "${value}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 require_mapping_keys CLOUD_RUN_ENV_VARS \
-  PARSER_MODEL \
-  GOOGLE_SHEET_ID
+  PARSER_MODEL
 
 require_mapping_keys CLOUD_RUN_SECRET_MAPPINGS \
   TELEGRAM_BOT_TOKEN \
   TELEGRAM_WEBHOOK_SECRET \
   WECHAT_TOKEN \
-  PARSER_API_KEY \
-  GOOGLE_SERVICE_ACCOUNT_JSON
+  PARSER_API_KEY
+
+storage_backend="$(
+  mapping_value "${CLOUD_RUN_ENV_VARS:-}" STORAGE_BACKEND || true
+)"
+storage_backend="${storage_backend:-google_sheets}"
+storage_backend="${storage_backend,,}"
+
+case "${storage_backend}" in
+  google_sheets)
+    require_mapping_keys CLOUD_RUN_ENV_VARS GOOGLE_SHEET_ID
+    require_mapping_keys CLOUD_RUN_SECRET_MAPPINGS GOOGLE_SERVICE_ACCOUNT_JSON
+    ;;
+  postgres)
+    require_mapping_keys CLOUD_RUN_SECRET_MAPPINGS DATABASE_URL
+    ;;
+  *)
+    echo "::error::STORAGE_BACKEND must be google_sheets or postgres"
+    exit 1
+    ;;
+esac
 
 image_name="${IMAGE_NAME:-expense-agent}"
 image_tag="${IMAGE_TAG:-${GITHUB_SHA:-manual}}"

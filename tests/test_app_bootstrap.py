@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.telegram_webhook import DEFAULT_TEXT_MESSAGE_REPLY
 from integrations.google_sheets.schema import transaction_header_row
 
 
@@ -31,6 +32,7 @@ def test_configured_app_wires_transaction_service(monkeypatch):
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
     monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
     monkeypatch.setenv("PARSER_MODEL", "parser-model")
+    monkeypatch.setenv("STORAGE_BACKEND", "google_sheets")
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
     monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet-1")
     monkeypatch.setattr(
@@ -89,6 +91,123 @@ def test_configured_app_wires_transaction_service(monkeypatch):
     ]
     assert sheets_client.rows[1][15] == sheets_client.rows[1][16]
     assert sheets_client.rows[1][15].endswith("+08:00")
+
+
+def test_configured_app_wires_postgres_transaction_service(monkeypatch):
+    from app import main as app_main
+
+    repositories: list[FakePostgresTransactionRepository] = []
+    reply_client = FakeTelegramReplyClient()
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
+    monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
+    monkeypatch.setenv("PARSER_MODEL", "parser-model")
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:password@localhost/db")
+    monkeypatch.setattr(
+        app_main,
+        "OpenAICompatibleLLMClient",
+        FakeLLMClient,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "PostgresTransactionRepository",
+        lambda **kwargs: repositories.append(
+            FakePostgresTransactionRepository(**kwargs)
+        )
+        or repositories[-1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "build_google_sheets_values_client",
+        lambda service_account_json: (_ for _ in ()).throw(
+            AssertionError("Google Sheets client should not be built")
+        ),
+        raising=False,
+    )
+
+    app = app_main.create_app(telegram_reply_client=reply_client)
+    client = TestClient(app)
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1000,
+            "message": {
+                "message_id": 9001,
+                "date": 1779251400,
+                "chat": {"id": 12345, "type": "private"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
+                "text": "午饭 12.5 麦当劳",
+            },
+        },
+        headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
+    )
+
+    assert response.status_code == 200
+    assert len(repositories) == 1
+    assert repositories[0].kwargs == {
+        "database_url": "postgres://user:password@localhost/db",
+        "timezone": "Asia/Singapore",
+    }
+    assert reply_client.sent_messages == [
+        {
+            "chat_id": "12345",
+            "text": "已记录：2026-05-20 餐饮 12.5 SGD 麦当劳",
+            "reply_to_message_id": "9001",
+        }
+    ]
+    assert repositories[0].records[0].source_platform == "telegram"
+    assert repositories[0].records[0].source_message_id == "9001"
+
+
+def test_postgres_backend_without_database_url_preserves_health(monkeypatch):
+    from app import main as app_main
+
+    reply_client = FakeTelegramReplyClient()
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
+    monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
+    monkeypatch.setenv("PARSER_MODEL", "parser-model")
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        app_main,
+        "PostgresTransactionRepository",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("PostgreSQL repository should not be built")
+        ),
+        raising=False,
+    )
+
+    app = app_main.create_app(telegram_reply_client=reply_client)
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 200
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1000,
+            "message": {
+                "message_id": 9001,
+                "date": 1779251400,
+                "chat": {"id": 12345, "type": "private"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
+                "text": "午饭 12.5 麦当劳",
+            },
+        },
+        headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
+    )
+
+    assert response.status_code == 200
+    assert reply_client.sent_messages == [
+        {
+            "chat_id": "12345",
+            "text": DEFAULT_TEXT_MESSAGE_REPLY,
+            "reply_to_message_id": "9001",
+        }
+    ]
 
 
 def test_custom_telegram_handler_does_not_build_default_wechat_handler(monkeypatch):
@@ -179,6 +298,34 @@ class InMemorySheetsClient:
         values: list[list[str]],
     ) -> None:
         raise AssertionError("update_values should not be called")
+
+
+class FakePostgresTransactionRepository:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.records: list[object] = []
+
+    def find_by_source_message(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        chat_id: str,
+        message_id: str,
+    ) -> None:
+        return None
+
+    def get_latest_transaction(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+    ) -> None:
+        return None
+
+    def append_transaction(self, record: object) -> object:
+        self.records.append(record)
+        return record
 
 
 class FakeTelegramReplyClient:

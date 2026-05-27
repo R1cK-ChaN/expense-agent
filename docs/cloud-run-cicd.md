@@ -30,8 +30,8 @@ Configure these as repository variables or production environment variables:
 | `CLOUD_RUN_REGION` | Cloud Run and Artifact Registry region, for example `asia-southeast1`. |
 | `CLOUD_RUN_SERVICE` | Cloud Run service name, for example `expense-agent`. |
 | `ARTIFACT_REGISTRY_REPOSITORY` | Docker Artifact Registry repository name. |
-| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL` and `GOOGLE_SHEET_ID`. |
-| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include all required runtime secret environment variables. |
+| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL` and the selected backend's non-secret settings. Set `STORAGE_BACKEND` explicitly for cutover or rollback; omitted values default to `google_sheets`. |
+| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include all required runtime secret environment variables for parser, IM providers, and the selected storage backend. |
 
 Optional variables:
 
@@ -43,7 +43,7 @@ Optional variables:
 Example non-secret config:
 
 ```text
-SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,GOOGLE_SHEET_ID=<sheet-id>,GOOGLE_WORKSHEET_NAME=Transactions
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=google_sheets,GOOGLE_SHEET_ID=<sheet-id>,GOOGLE_WORKSHEET_NAME=Transactions
 ```
 
 Example Secret Manager mappings:
@@ -51,6 +51,11 @@ Example Secret Manager mappings:
 ```text
 TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest
 ```
+
+For PostgreSQL storage, set `STORAGE_BACKEND=postgres`, provide `DATABASE_URL`
+through `CLOUD_RUN_SECRET_MAPPINGS`, and keep the Google Sheets settings
+available if production needs to roll back by changing `STORAGE_BACKEND` back to
+`google_sheets`.
 
 ## GCP Setup
 

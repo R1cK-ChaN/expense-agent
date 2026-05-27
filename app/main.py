@@ -6,7 +6,12 @@ from app.telegram_webhook import (
     create_telegram_webhook_router,
 )
 from app.wechat_webhook import WeChatTextHandler, create_wechat_webhook_router
-from config.settings import Settings, load_settings
+from config.settings import (
+    STORAGE_BACKEND_GOOGLE_SHEETS,
+    STORAGE_BACKEND_POSTGRES,
+    Settings,
+    load_settings,
+)
 from core.intent_parser import IntentParser
 from core.transaction_service import TransactionService
 from integrations.exchange_rates import FrankfurterExchangeRateProvider
@@ -15,6 +20,7 @@ from integrations.google_sheets.repository import (
     build_google_sheets_values_client,
 )
 from integrations.llm_client import OpenAICompatibleLLMClient
+from integrations.postgres.repository import PostgresTransactionRepository
 from integrations.telegram_client import TelegramBotClient
 
 
@@ -74,23 +80,20 @@ def create_app(
 
 
 def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler | None:
-    if not _transaction_service_configured(settings):
+    if not _parser_configured(settings):
+        return None
+
+    repository = _build_transaction_repository(settings)
+    if repository is None:
         return None
 
     llm_client = OpenAICompatibleLLMClient(
         api_key=settings.parser_api_key,
         model=settings.parser_model,
     )
-    sheets_client = build_google_sheets_values_client(
-        settings.google_service_account_json
-    )
     service = TransactionService(
         parser=IntentParser(llm_client=llm_client),
-        repository=GoogleSheetsTransactionRepository(
-            sheet_id=settings.google_sheet_id,
-            sheets_client=sheets_client,
-            timezone=settings.default_timezone,
-        ),
+        repository=repository,
         exchange_rate_provider=FrankfurterExchangeRateProvider(),
         timezone=settings.default_timezone,
         default_currency=settings.default_currency,
@@ -98,15 +101,39 @@ def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler |
     return service.handle_message
 
 
-def _transaction_service_configured(settings: Settings) -> bool:
+def _parser_configured(settings: Settings) -> bool:
     return all(
         (
             settings.parser_api_key,
             settings.parser_model,
-            settings.google_service_account_json,
-            settings.google_sheet_id,
         )
     )
+
+
+def _build_transaction_repository(
+    settings: Settings,
+) -> GoogleSheetsTransactionRepository | PostgresTransactionRepository | None:
+    if settings.storage_backend == STORAGE_BACKEND_GOOGLE_SHEETS:
+        if not settings.google_service_account_json or not settings.google_sheet_id:
+            return None
+        sheets_client = build_google_sheets_values_client(
+            settings.google_service_account_json
+        )
+        return GoogleSheetsTransactionRepository(
+            sheet_id=settings.google_sheet_id,
+            sheets_client=sheets_client,
+            timezone=settings.default_timezone,
+        )
+
+    if settings.storage_backend == STORAGE_BACKEND_POSTGRES:
+        if not settings.database_url:
+            return None
+        return PostgresTransactionRepository(
+            database_url=settings.database_url,
+            timezone=settings.default_timezone,
+        )
+
+    return None
 
 
 app = create_app()
