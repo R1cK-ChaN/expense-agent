@@ -35,6 +35,7 @@ def test_cloud_run_deploy_script_builds_deploys_and_checks_health():
     script = read_repo_file("scripts/deploy_cloud_run.sh")
 
     assert "gcloud builds submit" in script
+    assert "--suppress-logs" in script
     assert "gcloud run deploy" in script
     assert "--update-secrets" in script
     assert "CLOUD_RUN_SECRET_MAPPINGS" in script
