@@ -6,6 +6,7 @@ def test_settings_track_required_secret_environment_names():
     assert REQUIRED_SECRET_ENV_VARS == (
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
+        "WECHAT_TOKEN",
         "PARSER_API_KEY",
         "GOOGLE_SERVICE_ACCOUNT_JSON",
     )
@@ -22,6 +23,7 @@ def test_settings_do_not_expose_secret_values():
         {
             "TELEGRAM_BOT_TOKEN": "telegram-secret",
             "TELEGRAM_WEBHOOK_SECRET": "webhook-secret",
+            "WECHAT_TOKEN": "wechat-secret",
             "PARSER_API_KEY": "parser-secret",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "google-secret",
         }
@@ -31,11 +33,13 @@ def test_settings_do_not_expose_secret_values():
 
     assert "telegram-secret" not in repr(public_settings)
     assert "webhook-secret" not in repr(public_settings)
+    assert "wechat-secret" not in repr(public_settings)
     assert "parser-secret" not in repr(public_settings)
     assert "google-secret" not in repr(public_settings)
     assert public_settings["secrets"] == {
         "TELEGRAM_BOT_TOKEN": "<set>",
         "TELEGRAM_WEBHOOK_SECRET": "<set>",
+        "WECHAT_TOKEN": "<set>",
         "PARSER_API_KEY": "<set>",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "<set>",
     }
@@ -46,6 +50,7 @@ def test_settings_repr_does_not_expose_secret_values():
         {
             "TELEGRAM_BOT_TOKEN": "telegram-secret",
             "TELEGRAM_WEBHOOK_SECRET": "webhook-secret",
+            "WECHAT_TOKEN": "wechat-secret",
             "PARSER_API_KEY": "parser-secret",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "google-secret",
         }
@@ -55,6 +60,7 @@ def test_settings_repr_does_not_expose_secret_values():
 
     assert "telegram-secret" not in settings_repr
     assert "webhook-secret" not in settings_repr
+    assert "wechat-secret" not in settings_repr
     assert "parser-secret" not in settings_repr
     assert "google-secret" not in settings_repr
 
@@ -87,6 +93,7 @@ def test_blank_optional_environment_values_are_unconfigured():
         {
             "TELEGRAM_BOT_TOKEN": "",
             "TELEGRAM_WEBHOOK_SECRET": "",
+            "WECHAT_TOKEN": "",
             "PARSER_API_KEY": "",
             "GOOGLE_SERVICE_ACCOUNT_JSON": "",
             "GOOGLE_SHEET_ID": "",
@@ -98,6 +105,15 @@ def test_blank_optional_environment_values_are_unconfigured():
     assert settings.public_dict()["secrets"] == {
         "TELEGRAM_BOT_TOKEN": "<unset>",
         "TELEGRAM_WEBHOOK_SECRET": "<unset>",
+        "WECHAT_TOKEN": "<unset>",
         "PARSER_API_KEY": "<unset>",
         "GOOGLE_SERVICE_ACCOUNT_JSON": "<unset>",
     }
+
+
+def test_settings_load_wechat_token_without_public_exposure():
+    settings = load_settings({"WECHAT_TOKEN": "wechat-secret"})
+
+    assert settings.wechat_token == "wechat-secret"
+    assert "wechat-secret" not in repr(settings)
+    assert settings.public_dict()["secrets"]["WECHAT_TOKEN"] == "<set>"

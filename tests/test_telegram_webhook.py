@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.telegram_webhook import TelegramInboundMessage, UNSUPPORTED_MESSAGE_REPLY
+from app.telegram_webhook import UNSUPPORTED_MESSAGE_REPLY
+from core.messages import InboundMessage
 
 
 WEBHOOK_SECRET = "webhook-secret"
@@ -11,7 +12,7 @@ WEBHOOK_SECRET = "webhook-secret"
 
 def test_webhook_converts_private_text_message_and_replies():
     reply_client = FakeTelegramReplyClient()
-    handled_messages: list[TelegramInboundMessage] = []
+    handled_messages: list[InboundMessage] = []
     received_at = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
     app = create_app(
         telegram_reply_client=reply_client,
@@ -45,14 +46,15 @@ def test_webhook_converts_private_text_message_and_replies():
     assert response.status_code == 200
     assert response.json() == {"ok": True, "status": "replied"}
     assert handled_messages == [
-        TelegramInboundMessage(
-            telegram_user_id="42",
-            chat_id="12345",
-            message_id="9001",
+        InboundMessage(
+            source_platform="telegram",
+            source_user_id="42",
+            source_chat_id="12345",
+            source_message_id="9001",
             message_text="lunch 12.30",
             received_at=received_at,
-            telegram_username="ada",
-            telegram_user_display_name="Ada Lovelace",
+            source_username="ada",
+            source_user_display_name="Ada Lovelace",
         )
     ]
     assert reply_client.sent_messages == [
@@ -66,7 +68,7 @@ def test_webhook_converts_private_text_message_and_replies():
 
 def test_webhook_derives_display_name_when_username_is_absent():
     reply_client = FakeTelegramReplyClient()
-    handled_messages: list[TelegramInboundMessage] = []
+    handled_messages: list[InboundMessage] = []
     received_at = datetime(2026, 5, 20, 12, 3, tzinfo=timezone.utc)
     app = create_app(
         telegram_reply_client=reply_client,
@@ -97,13 +99,13 @@ def test_webhook_derives_display_name_when_username_is_absent():
     )
 
     assert response.status_code == 200
-    assert handled_messages[0].telegram_username is None
-    assert handled_messages[0].telegram_user_display_name == "Ada Lovelace"
+    assert handled_messages[0].source_username is None
+    assert handled_messages[0].source_user_display_name == "Ada Lovelace"
 
 
 def test_webhook_processes_group_mention_and_strips_bot_username():
     reply_client = FakeTelegramReplyClient()
-    handled_messages: list[TelegramInboundMessage] = []
+    handled_messages: list[InboundMessage] = []
     app = create_app(
         telegram_reply_client=reply_client,
         telegram_webhook_secret=WEBHOOK_SECRET,
@@ -138,14 +140,15 @@ def test_webhook_processes_group_mention_and_strips_bot_username():
     assert response.status_code == 200
     assert response.json() == {"ok": True, "status": "replied"}
     assert handled_messages == [
-        TelegramInboundMessage(
-            telegram_user_id="42",
-            chat_id="-100123",
-            message_id="9002",
+        InboundMessage(
+            source_platform="telegram",
+            source_user_id="42",
+            source_chat_id="-100123",
+            source_message_id="9002",
             message_text="lunch 12.30",
             received_at=received_at,
-            telegram_username="ada",
-            telegram_user_display_name="Ada Lovelace",
+            source_username="ada",
+            source_user_display_name="Ada Lovelace",
         )
     ]
     assert reply_client.sent_messages == [
@@ -263,7 +266,7 @@ def test_webhook_rejects_text_before_handler_when_reply_client_is_not_configured
     monkeypatch,
 ):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    handled_messages: list[TelegramInboundMessage] = []
+    handled_messages: list[InboundMessage] = []
     app = create_app(
         telegram_webhook_secret=WEBHOOK_SECRET,
         telegram_text_handler=lambda message: handled_messages.append(message)

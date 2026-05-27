@@ -2,36 +2,35 @@
 
 ## Overview
 
-The domain model separates user intent, parsed data, validation, and persistence. Telegram messages are the input envelope, parser results describe the user's intent, domain validation decides whether the intent is safe to execute, and Google Sheets stores accepted transactions.
+The domain model separates user intent, parsed data, validation, source metadata, and persistence. Telegram and WeChat messages are provider envelopes, parser results describe the user's intent, domain validation decides whether the intent is safe to execute, and Google Sheets stores accepted transactions.
 
-## Telegram Message Metadata
+## IM Source Metadata
 
-Telegram metadata is captured for every handled message so the backend can reply, preserve audit context, and avoid duplicate writes.
+IM source metadata is captured for every handled message so the backend can reply, preserve audit context, and avoid duplicate writes across Telegram and WeChat.
 
 Required fields:
 
-- `update_id`: Telegram update identifier.
-- `message_id`: Telegram message identifier within the chat.
-- `chat_id`: Telegram chat identifier used for replies.
-- `user_id`: Telegram sender identifier.
+- `source_platform`: provider identifier, currently `telegram` or `wechat`.
+- `source_message_id`: provider message identifier within the conversation.
+- `source_chat_id`: provider conversation or official-account identifier used for replies and duplicate detection.
+- `source_user_id`: provider sender identifier.
 - `message_text`: raw user-visible message text.
-- `message_timestamp`: Telegram message timestamp converted to an ISO 8601 datetime.
+- `message_timestamp`: provider message timestamp converted to an ISO 8601 datetime.
 
 Optional fields:
 
-- `username`: Telegram username when available.
-- `first_name`: Telegram first name when available.
-- `last_name`: Telegram last name when available.
-- `display_name`: display name derived from first and last name when available.
+- `source_username`: provider username when available.
+- `source_user_display_name`: provider display name when available.
 - `reply_to_message_id`: message being replied to when available.
 - `locale`: user or deployment locale when available.
 
 Invariants:
 
-- `update_id`, `message_id`, `chat_id`, and `user_id` must be preserved exactly as received from Telegram.
-- Private `message_text` is handed to the parser unchanged.
+- `source_platform`, `source_message_id`, `source_chat_id`, and `source_user_id` must be preserved exactly after provider-specific normalization.
+- Telegram private `message_text` is handed to the parser unchanged.
 - Group and supergroup `message_text` is handed to the parser only after the explicit bot mention is stripped by the Telegram adapter.
-- A transaction created from Telegram must retain enough metadata to detect duplicate processing of the same Telegram user/chat/message tuple.
+- WeChat Official Account text XML `Content` is handed to the parser unchanged after XML decoding.
+- A transaction must retain enough metadata to detect duplicate processing of the same source platform/user/chat/message tuple.
 
 ## Transaction
 
@@ -45,9 +44,10 @@ Required fields:
 - `currency`: ISO 4217 currency code.
 - `type`: transaction type, initially `expense`.
 - `category`: one supported normalized category.
-- `telegram_user_id`: source Telegram user identifier.
-- `telegram_chat_id`: source Telegram chat identifier.
-- `telegram_message_id`: source Telegram message identifier.
+- `source_platform`: source provider identifier.
+- `source_user_id`: source provider user identifier.
+- `source_chat_id`: source provider conversation identifier.
+- `source_message_id`: source provider message identifier.
 - `created_at`: backend creation timestamp in ISO 8601 format.
 - `updated_at`: backend update timestamp in ISO 8601 format.
 
@@ -56,8 +56,8 @@ Optional fields:
 - `merchant`: merchant or place when confidently available.
 - `payment_method`: card, wallet, cash, or other user-provided payment method when available.
 - `note`: short human-readable description or extra details from the user.
-- `telegram_username`: Telegram username when available.
-- `telegram_user_display_name`: Telegram display name derived from first and last name when available.
+- `source_username`: provider username when available.
+- `source_user_display_name`: provider display name when available.
 
 Invariants:
 
@@ -70,7 +70,7 @@ Invariants:
 - `created_at` must not change after creation.
 - `updated_at` must change when a stored transaction is updated.
 - Generated `created_at` and `updated_at` timestamps use the configured timezone and include an explicit offset, initially `Asia/Singapore` / `+08:00`.
-- A Telegram user/chat/message tuple can create at most one transaction unless future requirements explicitly support multi-expense messages.
+- A source platform/user/chat/message tuple can create at most one transaction unless future requirements explicitly support multi-expense messages.
 
 Create-expense validation returns a normalized transaction candidate before any
 repository write is allowed:
@@ -132,7 +132,7 @@ Fields:
 - `target`: user-provided reference to the transaction.
 - `candidate_transaction_ids`: transaction identifiers found during target resolution.
 - `changes`: validated transaction fields to update.
-- `requested_by_user_id`: Telegram user requesting the update.
+- `requested_by_user_id`: source user requesting the update.
 - `requested_at`: backend timestamp.
 
 Supported update fields for the update-recent MVP:
@@ -150,15 +150,15 @@ out of scope until a future issue expands the update contract.
 Invariants:
 
 - The target must resolve to exactly one transaction before any write occurs.
-- A user can update only transactions associated with the same Telegram user or chat policy defined by the implementation issue.
-- Within one service process, duplicate Telegram deliveries for the same update
+- A user can update only transactions associated with the same source platform/user or chat policy defined by the implementation issue.
+- Within one service process, duplicate provider deliveries for the same update
   message reuse the transaction target chosen for the first successful update.
 - Every changed field must satisfy the relevant transaction validation rules
   before storage is mutated.
 - Unsupported parser-proposed update fields are ignored when at least one
   supported field can be safely applied; when no supported fields remain, the
   update fails with a user-facing unsupported-update reply.
-- Updates must preserve the original `telegram_user_id`, `telegram_chat_id`, `telegram_message_id`, user display metadata, and `created_at`.
+- Updates must preserve the original `source_platform`, `source_user_id`, `source_chat_id`, `source_message_id`, user display metadata, and `created_at`.
 
 ## Query Request
 
@@ -170,7 +170,7 @@ Fields:
 - `category`: optional normalized category filter.
 - `limit`: optional maximum transaction count for list responses.
 - `aggregation`: `total`, `list`, or `by_category`.
-- `requested_by_user_id`: Telegram user requesting the query.
+- `requested_by_user_id`: source user requesting the query.
 - `requested_at`: backend timestamp.
 
 Invariants:
@@ -261,11 +261,12 @@ The Google Sheet should store one transaction per row with stable column names:
 - `merchant`
 - `payment_method`
 - `note`
-- `telegram_user_id`
-- `telegram_username`
-- `telegram_user_display_name`
-- `telegram_chat_id`
-- `telegram_message_id`
+- `source_platform`
+- `source_user_id`
+- `source_username`
+- `source_user_display_name`
+- `source_chat_id`
+- `source_message_id`
 - `created_at`
 - `updated_at`
 

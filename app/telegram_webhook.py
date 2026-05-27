@@ -1,11 +1,12 @@
 import hmac
 import re
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException
+
+from core.messages import InboundMessage, TextMessageHandler
 
 
 UNSUPPORTED_MESSAGE_REPLY = (
@@ -14,17 +15,6 @@ UNSUPPORTED_MESSAGE_REPLY = (
 DEFAULT_TEXT_MESSAGE_REPLY = (
     "I received your message. Expense parsing is not enabled yet."
 )
-
-
-@dataclass(frozen=True)
-class TelegramInboundMessage:
-    telegram_user_id: str
-    chat_id: str
-    message_id: str
-    message_text: str
-    received_at: datetime
-    telegram_username: str | None = None
-    telegram_user_display_name: str | None = None
 
 
 class TelegramReplyClient(Protocol):
@@ -38,7 +28,8 @@ class TelegramReplyClient(Protocol):
         raise NotImplementedError
 
 
-TelegramTextHandler = Callable[[TelegramInboundMessage], str]
+TelegramInboundMessage = InboundMessage
+TelegramTextHandler = TextMessageHandler
 
 
 def create_telegram_webhook_router(
@@ -117,16 +108,16 @@ def create_telegram_webhook_router(
         _require_reply_client(telegram_reply_client)
         _send_reply(
             telegram_reply_client,
-            chat_id=inbound_message.chat_id,
+            chat_id=inbound_message.source_chat_id,
             text=text_handler(inbound_message),
-            reply_to_message_id=inbound_message.message_id,
+            reply_to_message_id=inbound_message.source_message_id,
         )
         return {"ok": True, "status": "replied"}
 
     return router
 
 
-def _default_text_handler(message: TelegramInboundMessage) -> str:
+def _default_text_handler(message: InboundMessage) -> str:
     return DEFAULT_TEXT_MESSAGE_REPLY
 
 
@@ -165,14 +156,15 @@ def _inbound_message_from_telegram(
     if telegram_user_id is None or received_at is None:
         return None
 
-    return TelegramInboundMessage(
-        telegram_user_id=telegram_user_id,
-        chat_id=chat_id,
-        message_id=message_id,
+    return InboundMessage(
+        source_platform="telegram",
+        source_user_id=telegram_user_id,
+        source_chat_id=chat_id,
+        source_message_id=message_id,
         message_text=message_text,
         received_at=received_at,
-        telegram_username=_optional_string_value(from_user.get("username")),
-        telegram_user_display_name=_telegram_user_display_name(from_user),
+        source_username=_optional_string_value(from_user.get("username")),
+        source_user_display_name=_telegram_user_display_name(from_user),
     )
 
 

@@ -42,6 +42,7 @@ def test_cloud_run_deploy_script_builds_deploys_and_checks_health():
     assert "PARSER_MODEL" in script
     assert "GOOGLE_SHEET_ID" in script
     assert "TELEGRAM_BOT_TOKEN" in script
+    assert "WECHAT_TOKEN" in script
     assert "GOOGLE_SERVICE_ACCOUNT_JSON" in script
     assert "/health" in script
     assert "curl --fail" in script
