@@ -18,13 +18,14 @@ The backend is the only component allowed to decide whether data is valid, wheth
 
 1. Telegram or WeChat sends a text message to the platform webhook.
 2. The platform adapter extracts message text and source metadata.
-3. The application service sends the raw text and relevant defaults to the parser port.
-4. The parser returns a structured parser result.
-5. The application service validates the parser result against the domain model.
-6. The application service checks whether the source platform/user/chat/message tuple already created a transaction.
-7. The Google Sheets repository appends one transaction row when validation passes and no duplicate exists.
-8. The application service formats a confirmation reply.
-9. The platform adapter sends or returns the reply to the originating conversation.
+3. The application service checks whether the source platform/user/chat/message tuple already created a transaction.
+4. The application service sends the raw text and relevant defaults to the parser port.
+5. The parser returns a structured parser result.
+6. The application service validates the parser result against the domain model.
+7. Before append, the application service checks the user's latest recent expense for an exact currency-correction retry.
+8. The Google Sheets repository appends one transaction row when validation passes and no duplicate exists, or updates the recent row when the retry guard matches.
+9. The application service formats a confirmation or clarification reply.
+10. The platform adapter sends or returns the reply to the originating conversation.
 
 ### Update Transaction
 
@@ -135,7 +136,7 @@ Owns:
 
 - Treating parser output as untrusted input before create-expense writes.
 - Applying configured defaults for date, currency, type, and category.
-- Enforcing positive amount, valid date, supported mainstream currency, expense-only MVP type, and single-record MVP behavior.
+- Enforcing positive amount, valid date, supported mainstream currency, expense-only MVP type, supported update fields, and single-record MVP behavior.
 - Returning explicit validation error codes and user-facing messages for correctable failures.
 
 Does not own:
@@ -150,8 +151,9 @@ validation failure, and never mutates storage. Shared category constants live in
 `core/categories.py` so parser and validator code use the same allowlist without
 making the validator depend on parser prompt details.
 Supported currency constants and aliases live in `core/currencies.py`; missing
-currency defaults to the configured currency, explicit supported currencies are
-preserved, and unsupported currency values fail validation before storage writes.
+create-expense currency defaults to the configured currency, explicit supported
+currencies are preserved, currency update aliases normalize to their canonical
+codes, and unsupported currency values fail validation before storage writes.
 
 ### Parser Port
 

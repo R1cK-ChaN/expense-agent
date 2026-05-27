@@ -18,10 +18,11 @@ from core.transaction_service import (
     LOW_CONFIDENCE_MESSAGE,
     NO_RECENT_EXPENSE_MESSAGE,
     PROCESSING_FAILURE_MESSAGE,
+    SIMILAR_RECENT_EXPENSE_MESSAGE,
     UNKNOWN_INTENT_MESSAGE,
     TransactionService,
 )
-from core.validator import MISSING_AMOUNT_MESSAGE, UNSUPPORTED_UPDATE_FIELD_MESSAGE
+from core.validator import MISSING_AMOUNT_MESSAGE
 from integrations.google_sheets.repository import (
     TransactionRecord,
     TransactionRepositoryError,
@@ -307,6 +308,216 @@ def test_duplicate_telegram_message_returns_existing_confirmation_without_append
     assert repository.appended_records == []
 
 
+def test_create_expense_retry_updates_recent_matching_expense_currency():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排",
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("13"),
+                currency="SGD",
+                category="餐饮",
+                merchant="正新鸡排",
+                created_at="2026-05-20T13:00:00+08:00",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(
+            text="正新鸡排 13cny",
+            source_message_id="9002",
+            received_at=datetime(2026, 5, 20, 5, 2, tzinfo=timezone.utc),
+        )
+    )
+
+    assert reply == "已更新：2026-05-20 餐饮 13 CNY 正新鸡排"
+    assert repository.latest_calls == [("telegram", "42")]
+    assert repository.update_calls == [("txn-latest", {"currency": "CNY"})]
+    assert repository.updated_records == [
+        make_record(
+            transaction_id="txn-latest",
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排",
+        )
+    ]
+    assert repository.appended_records == []
+
+
+def test_duplicate_create_retry_message_reuses_original_retry_target():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排",
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("13"),
+                currency="SGD",
+                category="餐饮",
+                merchant="正新鸡排",
+                created_at="2026-05-20T13:00:00+08:00",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+    message = make_message(
+        text="正新鸡排 13cny",
+        source_message_id="9002",
+        received_at=datetime(2026, 5, 20, 5, 2, tzinfo=timezone.utc),
+    )
+
+    service.handle_telegram_message(message)
+    reply = service.handle_telegram_message(message)
+
+    assert reply == "已更新：2026-05-20 餐饮 13 CNY 正新鸡排"
+    assert repository.latest_calls == [("telegram", "42")]
+    assert repository.update_calls == [
+        ("txn-latest", {"currency": "CNY"}),
+        ("txn-latest", {"currency": "CNY"}),
+    ]
+    assert repository.appended_records == []
+
+
+def test_create_expense_retry_matches_note_when_latest_record_has_merchant():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("5"),
+            currency="CNY",
+            category="餐饮",
+            merchant=None,
+            note="latte",
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("5"),
+                currency="SGD",
+                category="餐饮",
+                merchant="Starbucks",
+                note="latte",
+                created_at="2026-05-20T13:00:00+08:00",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(
+            text="latte 5cny",
+            source_message_id="9002",
+            received_at=datetime(2026, 5, 20, 5, 2, tzinfo=timezone.utc),
+        )
+    )
+
+    assert reply == "已更新：2026-05-20 餐饮 5 CNY Starbucks"
+    assert repository.update_calls == [("txn-latest", {"currency": "CNY"})]
+    assert repository.appended_records == []
+
+
+def test_create_expense_retry_guard_clarifies_ambiguous_similar_currency_retry():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排新加坡",
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("13"),
+                currency="SGD",
+                category="餐饮",
+                merchant="正新鸡排",
+                created_at="2026-05-20T13:00:00+08:00",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(
+            text="正新鸡排新加坡 13cny",
+            source_message_id="9002",
+            received_at=datetime(2026, 5, 20, 5, 2, tzinfo=timezone.utc),
+        )
+    )
+
+    assert reply == (
+        SIMILAR_RECENT_EXPENSE_MESSAGE
+        + "：2026-05-20 餐饮 13 SGD 正新鸡排"
+    )
+    assert repository.latest_calls == [("telegram", "42")]
+    assert repository.update_calls == []
+    assert repository.appended_records == []
+
+
+def test_create_expense_retry_guard_ignores_stale_recent_match():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排",
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("13"),
+                currency="SGD",
+                category="餐饮",
+                merchant="正新鸡排",
+                created_at="2026-05-20T12:00:00+08:00",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(
+            text="正新鸡排 13cny",
+            source_message_id="9002",
+            received_at=datetime(2026, 5, 20, 5, 2, tzinfo=timezone.utc),
+        )
+    )
+
+    assert reply == "已记录：2026-05-20 餐饮 13 CNY 正新鸡排"
+    assert repository.latest_calls == [("telegram", "42")]
+    assert repository.update_calls == []
+    assert repository.appended_records == [
+        make_record(
+            transaction_id="txn-1",
+            amount=Decimal("13"),
+            currency="CNY",
+            category="餐饮",
+            merchant="正新鸡排",
+            source_message_id="9002",
+        )
+    ]
+
+
 def test_unknown_intent_returns_guidance_without_append():
     parser = FakeParser(
         IntentParserResult(
@@ -419,6 +630,11 @@ def test_update_recent_expense_updates_category_and_confirms_updated_summary():
             {"date": "2026-05-19"},
             {"date": "2026-05-19"},
         ),
+        (
+            "刚才那笔改成 CNY",
+            {"currency": "CNY"},
+            {"currency": "CNY"},
+        ),
     ],
 )
 def test_update_recent_expense_updates_supported_fields(
@@ -450,7 +666,6 @@ def test_update_recent_expense_applies_semantic_food_correction_with_note():
                 "amount": Decimal("6.8"),
                 "category": "餐饮",
                 "note": "白鸡饭",
-                "currency": "SGD",
             }
         )
     )
@@ -507,20 +722,34 @@ def test_update_recent_expense_without_latest_record_returns_prd_reply():
     assert repository.update_calls == []
 
 
-def test_update_recent_expense_rejects_unsupported_fields_without_storage_lookup():
-    parser = FakeParser(make_update_parser_result(update_fields={"currency": "USD"}))
+def test_update_recent_expense_updates_currency_and_confirms_updated_summary():
+    parser = FakeParser(make_update_parser_result(update_fields={"currency": "CNY"}))
     repository = FakeTransactionRepository(
-        latest_records={"42": make_record(transaction_id="txn-latest")}
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                currency="SGD",
+                merchant="正新鸡排",
+            )
+        }
     )
     service = make_service(parser=parser, repository=repository)
 
     reply = service.handle_telegram_message(
-        make_message(text="刚才那笔改成 USD")
+        make_message(text="改成 cny")
     )
 
-    assert reply == UNSUPPORTED_UPDATE_FIELD_MESSAGE
-    assert repository.latest_calls == []
-    assert repository.update_calls == []
+    assert reply == "已更新：2026-05-20 餐饮 12.5 CNY 正新鸡排"
+    assert repository.latest_calls == [("telegram", "42")]
+    assert repository.update_calls == [("txn-latest", {"currency": "CNY"})]
+    assert repository.updated_records == [
+        make_record(
+            transaction_id="txn-latest",
+            currency="CNY",
+            merchant="正新鸡排",
+        )
+    ]
+    assert repository.appended_records == []
 
 
 def test_update_recent_expense_is_scoped_to_current_source_user():

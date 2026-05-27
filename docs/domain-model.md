@@ -139,26 +139,47 @@ Supported update fields for the update-recent MVP:
 
 - `date`
 - `amount`
+- `currency`
 - `category`
 - `merchant`
 - `note`
 - `payment_method`
 
-`type`, `currency`, arbitrary historical targeting, and multi-record updates are
-out of scope until a future issue expands the update contract.
+`type`, arbitrary historical targeting, and multi-record updates are out of
+scope until a future issue expands the update contract.
 
 Invariants:
 
 - The target must resolve to exactly one transaction before any write occurs.
 - A user can update only transactions associated with the same source platform/user or chat policy defined by the implementation issue.
 - Within one service process, duplicate provider deliveries for the same update
-  message reuse the transaction target chosen for the first successful update.
+  or create-style retry-correction message reuse the transaction target chosen
+  for the first successful update.
 - Every changed field must satisfy the relevant transaction validation rules
   before storage is mutated.
 - Unsupported parser-proposed update fields are ignored when at least one
   supported field can be safely applied; when no supported fields remain, the
   update fails with a user-facing unsupported-update reply.
 - Updates must preserve the original `source_platform`, `source_user_id`, `source_chat_id`, `source_message_id`, user display metadata, and `created_at`.
+
+## Correction Retry Guard
+
+Before appending a newly parsed expense, the application service checks the
+same user's latest recent expense for a likely currency correction retry.
+
+The guard can update the latest row instead of appending when all stable fields
+match and only currency differs:
+
+- same source platform and user
+- same transaction date
+- same amount
+- same category
+- same normalized merchant or note
+- latest row created within the configured short retry window
+
+When stable fields match but the merchant/note is only similar, the service
+returns a clarification prompt instead of appending a duplicate row. The guard
+does not replace source-message idempotency.
 
 ## Query Request
 

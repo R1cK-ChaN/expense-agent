@@ -55,6 +55,33 @@ _AMOUNT_CUES = (
     "花了",
     "金额",
 )
+_POSITIVE_CURRENCY_UPDATE_CUES = (
+    "currency",
+    "改成",
+    "改为",
+    "改用",
+    "换成",
+    "币种",
+    "货币",
+)
+_NEGATIVE_CURRENCY_UPDATE_CUES = ("不是", "不对")
+_CURRENCY_FIELD_CUES = ("currency", "币种", "货币")
+_NON_CURRENCY_UPDATE_FIELD_CUES = (
+    "amount",
+    "category",
+    "date",
+    "merchant",
+    "note",
+    "payment",
+    "付款",
+    "分类",
+    "商家",
+    "备注",
+    "支付方式",
+    "日期",
+    "金额",
+)
+_GLOBAL_CURRENCY_SETTING_CUES = ("default", "默认")
 _KNOWN_UNSUPPORTED_ATTACHED_CURRENCY_CODES = frozenset(
     {
         "AED",
@@ -90,6 +117,24 @@ _ATTACHED_AMOUNT_CURRENCY_PATTERN = re.compile(
     r"(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+_CURRENCY_UPDATE_TOKENS = tuple(
+    sorted(
+        {
+            *SUPPORTED_CURRENCIES,
+            *(alias for alias in CURRENCY_ALIASES if " " not in alias),
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_CURRENCY_UPDATE_TOKEN_PATTERN = "|".join(
+    re.escape(token) for token in _CURRENCY_UPDATE_TOKENS
+)
+_CURRENCY_UPDATE_PATTERN = re.compile(
+    rf"(?<![A-Za-z0-9])(?P<currency>{_CURRENCY_UPDATE_TOKEN_PATTERN})(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_DETERMINISTIC_UPDATE_CONFIDENCE = 0.95
 
 
 class ParserIntent(StrEnum):
@@ -218,6 +263,9 @@ For create_expense, expense must be:
 }}
 
 For update_recent_expense, update_fields must contain only fields being changed.
+For currency-only corrections such as "改成 cny", "改成人民币",
+"币种改成 CNY", or "不是 SGD，是 CNY", use update_recent_expense with
+update_fields.currency set to the target currency.
 When a descriptive correction clearly changes the category, include both the
 descriptive field and category. For example, changing an item to 白鸡饭 should
 include category 餐饮 and note 白鸡饭.
@@ -256,7 +304,8 @@ class IntentParser:
             payload = json.loads(raw_response)
             result = _parse_payload(payload)
             result = _backfill_attached_create_amount_currency(text, result)
-            return _backfill_unambiguous_update_amount(text, result)
+            result = _backfill_unambiguous_update_amount(text, result)
+            return _backfill_unambiguous_update_currency(text, result)
         except (TypeError, ValueError, json.JSONDecodeError):
             return IntentParserResult.failure("malformed_llm_output")
 
@@ -397,6 +446,81 @@ def _unambiguous_amount_from_text(text: str) -> Decimal | None:
 def _has_amount_cue(text: str, start: int, end: int) -> bool:
     window = text[max(0, start - 12) : min(len(text), end + 6)].lower()
     return any(cue in window for cue in _AMOUNT_CUES)
+
+
+def _backfill_unambiguous_update_currency(
+    text: str,
+    result: IntentParserResult,
+) -> IntentParserResult:
+    if result.intent is ParserIntent.UPDATE_RECENT_EXPENSE and result.update_fields:
+        return result
+    if result.intent not in {ParserIntent.UNKNOWN, ParserIntent.UPDATE_RECENT_EXPENSE}:
+        return result
+
+    currency = _unambiguous_update_currency_from_text(text)
+    if currency is None:
+        return result
+
+    return replace(
+        result,
+        intent=ParserIntent.UPDATE_RECENT_EXPENSE,
+        confidence=max(result.confidence, _DETERMINISTIC_UPDATE_CONFIDENCE),
+        update_fields={
+            **result.update_fields,
+            "currency": currency,
+        },
+        missing_fields=tuple(
+            field for field in result.missing_fields if field != "currency"
+        ),
+    )
+
+
+def _unambiguous_update_currency_from_text(text: str) -> str | None:
+    if _AMOUNT_PATTERN.search(text) is not None:
+        return None
+
+    normalized_text = text.lower()
+    has_positive_cue = any(
+        cue.lower() in normalized_text for cue in _POSITIVE_CURRENCY_UPDATE_CUES
+    )
+    has_negative_cue = any(cue in text for cue in _NEGATIVE_CURRENCY_UPDATE_CUES)
+    if not has_positive_cue and not has_negative_cue:
+        return None
+
+    currencies = [
+        currency
+        for currency in (
+            normalize_currency_code(match.group("currency"))
+            for match in _CURRENCY_UPDATE_PATTERN.finditer(text)
+        )
+        if currency is not None
+    ]
+    if not currencies:
+        return None
+    if has_negative_cue and len(currencies) < 2:
+        return None
+    if _has_global_currency_setting_cue(normalized_text):
+        return None
+    if _has_non_currency_update_field_cue(
+        normalized_text
+    ) and not _has_currency_field_cue(normalized_text):
+        return None
+
+    return currencies[-1]
+
+
+def _has_currency_field_cue(normalized_text: str) -> bool:
+    return any(cue.lower() in normalized_text for cue in _CURRENCY_FIELD_CUES)
+
+
+def _has_non_currency_update_field_cue(normalized_text: str) -> bool:
+    return any(
+        cue.lower() in normalized_text for cue in _NON_CURRENCY_UPDATE_FIELD_CUES
+    )
+
+
+def _has_global_currency_setting_cue(normalized_text: str) -> bool:
+    return any(cue.lower() in normalized_text for cue in _GLOBAL_CURRENCY_SETTING_CUES)
 
 
 def _parse_intent(value: object) -> ParserIntent:

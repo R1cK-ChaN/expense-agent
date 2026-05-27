@@ -45,6 +45,8 @@ Examples:
 
 - `change last lunch to 13.20`
 - `刚才那笔改成交通`
+- `改成 cny`
+- `不是 SGD，是 CNY`
 - `把昨天咖啡改成餐饮`
 - `改一下，我吃了白鸡饭花了6.8`
 
@@ -52,7 +54,7 @@ Expected behavior:
 
 - The backend resolves the target transaction before applying the update.
 - The bot does not update storage when the target transaction is missing or ambiguous.
-- The bot applies valid inferred changes such as amount, date, category, merchant, note, and payment method.
+- The bot applies valid inferred changes such as amount, date, currency, category, merchant, note, and payment method.
 - Extra parser fields that are not supported for updates do not block otherwise valid safe changes.
 - The bot replies with the updated transaction summary.
 
