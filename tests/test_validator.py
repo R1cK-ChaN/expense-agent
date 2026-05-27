@@ -174,6 +174,38 @@ def test_validation_rejects_inline_multiple_expense_amounts(source_text):
 @pytest.mark.parametrize(
     "source_text",
     [
+        "ipad pro 13inch 6599 cny",
+        "ipad pro 13 inch 6599 cny",
+        "ipad pro 256g 6599 cny",
+        "ipad pro 256 GB 6599 cny",
+        "ipad pro 512gb 6599 cny",
+        "macbook m4 12999 cny",
+        "iphone 15 6599 cny",
+    ],
+)
+def test_validation_accepts_product_spec_numbers_with_single_amount(source_text):
+    result = validate_create_expense(
+        make_parser_result(
+            amount=Decimal("6599"),
+            currency="CNY",
+            category="数码",
+            merchant="ipad pro 13inch",
+            note="ipad pro 13inch",
+        ),
+        context=make_context(),
+        source_text=source_text,
+    )
+
+    assert result.is_valid is True
+    assert result.expense is not None
+    assert result.expense.amount == Decimal("6599")
+    assert result.expense.currency == "CNY"
+    assert result.expense.category == "数码"
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
         "2026-05-20\n午饭 12",
         "5月20日 午饭 12",
         "2026年5月20日 午饭 12",
@@ -184,6 +216,25 @@ def test_validation_does_not_treat_date_and_single_amount_as_multiple_expenses(
 ):
     result = validate_create_expense(
         make_parser_result(),
+        context=make_context(),
+        source_text=source_text,
+    )
+
+    assert result.is_valid is True
+    assert result.expense is not None
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        "12:30:45 lunch 10",
+        "2026-05-20T12:30:45 lunch 10",
+        "order 123-456 taxi 10",
+    ],
+)
+def test_validation_ignores_separator_delimited_numbers(source_text):
+    result = validate_create_expense(
+        make_parser_result(amount=Decimal("10")),
         context=make_context(),
         source_text=source_text,
     )
