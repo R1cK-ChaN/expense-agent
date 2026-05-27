@@ -48,6 +48,60 @@ _DATE_OR_TIME_PATTERN = re.compile(
     r"|\d{1,2}:\d{2}"
     r")(?!\d)"
 )
+_PRODUCT_SPEC_TOKEN_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?(?:cm|gb|g|hz|in|inch|kg|mah|mb|mm|tb|w)\b",
+    re.IGNORECASE,
+)
+_PRODUCT_CODE_TOKEN_PATTERN = re.compile(
+    r"([a-z]{1,8})\d{1,4}[a-z]{0,4}\b",
+    re.IGNORECASE,
+)
+_PRODUCT_CODE_PREFIXES = frozenset(
+    {
+        "a",
+        "gtx",
+        "i",
+        "ipad",
+        "iphone",
+        "m",
+        "mate",
+        "p",
+        "ps",
+        "rtx",
+        "rx",
+        "s",
+        "x",
+    }
+)
+_PRODUCT_MODEL_NUMBER_PRECEDERS = frozenset(
+    {
+        "galaxy",
+        "honor",
+        "ipad",
+        "iphone",
+        "mate",
+        "oneplus",
+        "pixel",
+        "redmi",
+        "watch",
+        "xiaomi",
+    }
+)
+_PRODUCT_SPEC_UNITS = frozenset(
+    {
+        "cm",
+        "g",
+        "gb",
+        "hz",
+        "inch",
+        "kg",
+        "mah",
+        "mb",
+        "mm",
+        "tb",
+        "w",
+    }
+)
 
 
 class ValidationErrorCode(StrEnum):
@@ -359,4 +413,82 @@ def _appears_to_contain_multiple_expenses(source_text: str | None) -> bool:
         return False
 
     candidate_text = _DATE_OR_TIME_PATTERN.sub(" ", source_text)
-    return len(_AMOUNT_PATTERN.findall(candidate_text)) > 1
+    amount_count = 0
+    for match in _AMOUNT_PATTERN.finditer(candidate_text):
+        if _is_product_spec_or_model_number(candidate_text, match):
+            continue
+
+        amount_count += 1
+        if amount_count > 1:
+            return True
+
+    return False
+
+
+def _is_product_spec_or_model_number(text: str, match: re.Match[str]) -> bool:
+    token = _token_containing_match(text, match).lower()
+    number_text = match.group()
+    if token != number_text:
+        return _is_product_spec_token(token) or _is_product_code_token(token)
+
+    if _is_spaced_product_spec_number(text, match):
+        return True
+
+    return _is_standalone_product_model_number(text, match)
+
+
+def _token_containing_match(text: str, match: re.Match[str]) -> str:
+    start, end = match.span()
+    while start > 0 and _is_product_token_character(text[start - 1]):
+        start -= 1
+    while end < len(text) and _is_product_token_character(text[end]):
+        end += 1
+    return text[start:end]
+
+
+def _is_product_token_character(character: str) -> bool:
+    return character.isalnum() or character == "."
+
+
+def _is_product_spec_token(token: str) -> bool:
+    return _PRODUCT_SPEC_TOKEN_PATTERN.fullmatch(token) is not None
+
+
+def _is_spaced_product_spec_number(text: str, match: re.Match[str]) -> bool:
+    unit_match = re.match(r"\s*([A-Za-z]+)\b", text[match.end() :])
+    if unit_match is None:
+        return False
+    return unit_match.group(1).lower() in _PRODUCT_SPEC_UNITS
+
+
+def _is_product_code_token(token: str) -> bool:
+    match = _PRODUCT_CODE_TOKEN_PATTERN.fullmatch(token)
+    if match is None:
+        return False
+    return match.group(1).lower() in _PRODUCT_CODE_PREFIXES
+
+
+def _is_standalone_product_model_number(
+    text: str,
+    match: re.Match[str],
+) -> bool:
+    number_text = match.group()
+    if "." in number_text:
+        return False
+
+    try:
+        number = int(number_text)
+    except ValueError:
+        return False
+
+    if number > 99:
+        return False
+
+    previous_word_match = re.search(
+        r"([A-Za-z][A-Za-z0-9]*)\s*$",
+        text[: match.start()],
+    )
+    if previous_word_match is None:
+        return False
+
+    return previous_word_match.group(1).lower() in _PRODUCT_MODEL_NUMBER_PRECEDERS

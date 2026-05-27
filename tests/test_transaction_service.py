@@ -131,6 +131,36 @@ def test_create_expense_records_haircut_as_personal_care():
     ]
 
 
+def test_create_expense_records_product_with_spec_numbers():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("6599"),
+            currency="CNY",
+            category="数码",
+            merchant="ipad pro 13inch",
+            note="ipad pro 13inch",
+        )
+    )
+    repository = FakeTransactionRepository()
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(text="@expenseBillingBot ipad pro 13inch 6599 cny")
+    )
+
+    assert reply == "已记录：2026-05-20 数码 6599 CNY ipad pro 13inch"
+    assert repository.appended_records == [
+        make_record(
+            transaction_id="txn-1",
+            amount=Decimal("6599"),
+            currency="CNY",
+            category="数码",
+            merchant="ipad pro 13inch",
+            note="ipad pro 13inch",
+        )
+    ]
+
+
 def test_create_expense_preserves_parser_resolved_relative_date():
     parser = FakeParser(
         make_parser_result(
