@@ -151,6 +151,114 @@ def test_parser_reports_missing_amount_without_failing_create_intent():
     assert result.missing_fields == ("amount",)
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_amount", "expected_currency"),
+    [
+        ("咖啡粉 123rmb", Decimal("123"), "CNY"),
+        ("咖啡粉 123人民币", Decimal("123"), "CNY"),
+        ("午饭 12sgd", Decimal("12"), "SGD"),
+        ("午饭 12cny", Decimal("12"), "CNY"),
+        ("午饭 12usd", Decimal("12"), "USD"),
+    ],
+)
+def test_parser_backfills_attached_amount_currency_when_llm_misses_split(
+    text: str,
+    expected_amount: Decimal,
+    expected_currency: str,
+):
+    llm_client = FakeLLMClient(
+        {
+            "intent": "create_expense",
+            "confidence": 0.86,
+            "expense": {
+                "date": "2026-05-20",
+                "amount": None,
+                "currency": "SGD",
+                "category": "餐饮",
+                "merchant": None,
+                "payment_method": None,
+                "note": "咖啡粉",
+            },
+            "update_fields": {},
+            "query": None,
+            "missing_fields": ["amount"],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse(text, context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.CREATE_EXPENSE
+    assert result.expense is not None
+    assert result.expense.amount == expected_amount
+    assert result.expense.currency == expected_currency
+    assert result.missing_fields == ()
+
+
+def test_parser_preserves_attached_unsupported_currency_code_for_validator():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "create_expense",
+            "confidence": 0.86,
+            "expense": {
+                "date": "2026-05-20",
+                "amount": None,
+                "currency": "SGD",
+                "category": "餐饮",
+                "merchant": None,
+                "payment_method": None,
+                "note": "咖啡粉",
+            },
+            "update_fields": {},
+            "query": None,
+            "missing_fields": ["amount"],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("咖啡粉 123aed", context=make_context())
+
+    assert result.is_success is True
+    assert result.expense is not None
+    assert result.expense.amount == Decimal("123")
+    assert result.expense.currency == "AED"
+    assert result.missing_fields == ()
+
+
+@pytest.mark.parametrize("text", ["iPhone 12pro case", "batteries 3pcs"])
+def test_parser_does_not_treat_common_non_currency_suffixes_as_amounts(
+    text: str,
+):
+    llm_client = FakeLLMClient(
+        {
+            "intent": "create_expense",
+            "confidence": 0.82,
+            "expense": {
+                "date": "2026-05-20",
+                "amount": None,
+                "currency": "SGD",
+                "category": "未分类",
+                "merchant": None,
+                "payment_method": None,
+                "note": text,
+            },
+            "update_fields": {},
+            "query": None,
+            "missing_fields": ["amount"],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse(text, context=make_context())
+
+    assert result.is_success is True
+    assert result.expense is not None
+    assert result.expense.amount is None
+    assert result.expense.currency == "SGD"
+    assert result.missing_fields == ("amount",)
+
+
 def test_parser_extracts_update_recent_expense_fields():
     llm_client = FakeLLMClient(
         {
