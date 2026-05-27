@@ -103,6 +103,32 @@ def test_create_expense_defaults_missing_date_and_currency_before_append():
     ]
 
 
+def test_create_expense_records_haircut_as_personal_care():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("19"),
+            category="个人护理",
+            merchant=None,
+            note="剪头发",
+        )
+    )
+    repository = FakeTransactionRepository()
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(make_message(text="剪头发 19"))
+
+    assert reply == "已记录：2026-05-20 个人护理 19 SGD 剪头发"
+    assert repository.appended_records == [
+        make_record(
+            transaction_id="txn-1",
+            amount=Decimal("19"),
+            category="个人护理",
+            merchant=None,
+            note="剪头发",
+        )
+    ]
+
+
 def test_create_expense_preserves_parser_resolved_relative_date():
     parser = FakeParser(
         make_parser_result(
@@ -266,6 +292,11 @@ def test_update_recent_expense_updates_category_and_confirms_updated_summary():
             {"payment_method": "Visa"},
         ),
         (
+            "刚才那笔备注是白鸡饭",
+            {"note": "白鸡饭"},
+            {"note": "白鸡饭"},
+        ),
+        (
             "刚才那笔是昨天的",
             {"date": "2026-05-19"},
             {"date": "2026-05-19"},
@@ -292,6 +323,54 @@ def test_update_recent_expense_updates_supported_fields(
     assert reply == format_expected_update_confirmation(expected_record)
     assert repository.update_calls == [("txn-latest", update_fields)]
     assert repository.updated_records == [expected_record]
+
+
+def test_update_recent_expense_applies_semantic_food_correction_with_note():
+    parser = FakeParser(
+        make_update_parser_result(
+            update_fields={
+                "amount": Decimal("6.8"),
+                "category": "餐饮",
+                "note": "白鸡饭",
+                "currency": "SGD",
+            }
+        )
+    )
+    repository = FakeTransactionRepository(
+        latest_records={
+            "42": make_record(
+                transaction_id="txn-latest",
+                amount=Decimal("19"),
+                category="个人护理",
+                note="剪头发",
+            )
+        }
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_telegram_message(
+        make_message(text="改一下，我没有剪头发，也没有去吃福建面，我吃了白鸡饭花了6.8")
+    )
+
+    assert reply == "已更新：2026-05-20 餐饮 6.8 SGD 白鸡饭"
+    assert repository.update_calls == [
+        (
+            "txn-latest",
+            {
+                "amount": Decimal("6.8"),
+                "category": "餐饮",
+                "note": "白鸡饭",
+            },
+        )
+    ]
+    assert repository.updated_records == [
+        make_record(
+            transaction_id="txn-latest",
+            amount=Decimal("6.8"),
+            category="餐饮",
+            note="白鸡饭",
+        )
+    ]
 
 
 def test_update_recent_expense_without_latest_record_returns_prd_reply():

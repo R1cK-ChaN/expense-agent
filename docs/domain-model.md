@@ -139,10 +139,11 @@ Supported update fields for the update-recent MVP:
 - `amount`
 - `category`
 - `merchant`
+- `note`
 - `payment_method`
 
-`type`, `currency`, `note`, arbitrary historical targeting, and multi-record
-updates are out of scope until a future issue expands the update contract.
+`type`, `currency`, arbitrary historical targeting, and multi-record updates are
+out of scope until a future issue expands the update contract.
 
 Invariants:
 
@@ -152,6 +153,9 @@ Invariants:
   message reuse the transaction target chosen for the first successful update.
 - Every changed field must satisfy the relevant transaction validation rules
   before storage is mutated.
+- Unsupported parser-proposed update fields are ignored when at least one
+  supported field can be safely applied; when no supported fields remain, the
+  update fails with a user-facing unsupported-update reply.
 - Updates must preserve the original `telegram_user_id`, `telegram_chat_id`, `telegram_message_id`, user display metadata, and `created_at`.
 
 ## Query Request
@@ -188,6 +192,16 @@ The canonical category enum is:
 - `教育`
 - `办公`
 - `旅行`
+- `个人护理`
+- `生活服务`
+- `家庭`
+- `服饰`
+- `数码`
+- `健身`
+- `礼物`
+- `税费`
+- `保险`
+- `其他`
 - `未分类`
 
 Category rules:

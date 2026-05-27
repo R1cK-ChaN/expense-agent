@@ -83,6 +83,8 @@ Owns:
 - Routing parser intents to create, update, query, or unsupported handlers.
 - Applying configured defaults such as timezone and currency.
 - Validating domain invariants before storage writes.
+- Applying valid supported update fields while ignoring unsupported
+  parser-proposed fields when at least one safe change remains.
 - Enforcing idempotency for Telegram update processing.
 - Formatting confirmation, clarification, empty-result, and error replies.
 - Coordinating repositories and parser ports.
