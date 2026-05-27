@@ -72,7 +72,7 @@ image_tag="${IMAGE_TAG:-${GITHUB_SHA:-manual}}"
 image_uri="${CLOUD_RUN_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/${image_name}:${image_tag}"
 
 echo "Building ${image_uri}"
-gcloud builds submit --project "${GCP_PROJECT_ID}" --tag "${image_uri}" .
+gcloud builds submit --project "${GCP_PROJECT_ID}" --tag "${image_uri}" --suppress-logs .
 
 deploy_args=(
   "${CLOUD_RUN_SERVICE}"
