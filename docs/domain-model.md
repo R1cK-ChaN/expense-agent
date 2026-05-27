@@ -62,7 +62,7 @@ Optional fields:
 Invariants:
 
 - `amount` must be greater than zero.
-- `currency` must be an uppercase ISO 4217 code.
+- `currency` must be one of the supported uppercase ISO 4217 currency codes.
 - `type` must be `expense` for the MVP.
 - `category` must be one of the supported category values.
 - `date` must be a valid date.
@@ -79,6 +79,8 @@ repository write is allowed:
 - `amount` values of `0` or below fail.
 - Missing `date` defaults to today's date in the configured timezone.
 - Missing `currency` defaults to `SGD` unless runtime configuration supplies a different default.
+- Supported currency aliases such as `人民币`, `RMB`, `美金`, and `新币` normalize to their canonical currency codes.
+- Unsupported currency values fail validation before storage writes.
 - Missing, blank, or unsupported `category` values become `未分类`.
 - Missing `type` defaults to `expense`; any other type fails for the MVP.
 - Messages that appear to contain multiple expense lines fail rather than creating multiple rows.
@@ -176,7 +178,39 @@ Invariants:
 - Query requests must not append, update, or delete transaction rows.
 - Query date ranges must be bounded before storage access.
 - Query results must be scoped to the requesting user or chat policy defined by the implementation issue.
-- Monetary totals must be grouped by currency unless exchange-rate support is explicitly added later.
+- Monthly total queries return the configured default-currency total for the current month.
+- Non-default-currency expenses are converted with transaction-date daily reference rates for reporting only.
+- When the exact transaction date has no rate, the latest previous available rate may be used and the rate date must be visible in the reply context.
+- Original stored `amount` and `currency` must not be overwritten by report conversion.
+
+## Supported Currencies
+
+The supported mainstream currency enum is:
+
+- `SGD`
+- `CNY`
+- `USD`
+- `EUR`
+- `GBP`
+- `JPY`
+- `HKD`
+- `TWD`
+- `MYR`
+- `IDR`
+- `THB`
+- `VND`
+- `KRW`
+- `AUD`
+- `NZD`
+- `CAD`
+- `CHF`
+- `INR`
+- `PHP`
+
+Currency aliases are normalized before validation. Ambiguous symbols such as `$`
+or `¥` are not treated as a specific foreign currency by the backend; when the
+parser cannot resolve the intended code, validation falls back to the configured
+default only if currency is omitted.
 
 ## Supported Categories
 

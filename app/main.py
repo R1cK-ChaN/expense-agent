@@ -8,6 +8,7 @@ from app.telegram_webhook import (
 from config.settings import Settings, load_settings
 from core.intent_parser import IntentParser
 from core.transaction_service import TransactionService
+from integrations.exchange_rates import FrankfurterExchangeRateProvider
 from integrations.google_sheets.repository import (
     GoogleSheetsTransactionRepository,
     build_google_sheets_values_client,
@@ -77,6 +78,7 @@ def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler |
             sheets_client=sheets_client,
             timezone=settings.default_timezone,
         ),
+        exchange_rate_provider=FrankfurterExchangeRateProvider(),
         timezone=settings.default_timezone,
         default_currency=settings.default_currency,
     )

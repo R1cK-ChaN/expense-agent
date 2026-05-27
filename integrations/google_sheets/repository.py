@@ -199,6 +199,23 @@ class GoogleSheetsTransactionRepository:
 
         return total
 
+    def list_monthly_expenses(
+        self,
+        *,
+        user_id: str,
+        month: str,
+    ) -> list[TransactionRecord]:
+        _validate_month(month)
+        return [
+            record
+            for _row_number, record in self._load_records()
+            if (
+                record.telegram_user_id == str(user_id)
+                and record.type == "expense"
+                and record.date.startswith(f"{month}-")
+            )
+        ]
+
     def _load_records(self) -> list[tuple[int, TransactionRecord]]:
         rows = self._load_validated_rows()
 

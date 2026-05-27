@@ -80,6 +80,37 @@ Expected behavior:
 - Default category: `未分类` when a valid expense is clear but no supported category is confidently present.
 - Generated storage timestamps use the configured timezone and include an explicit offset.
 
+## Supported Currencies
+
+The app stores the original expense amount and currency. Missing currency
+defaults to `SGD`; explicit supported currencies are preserved and used for
+reporting conversion only.
+
+Supported mainstream currencies:
+
+- `SGD`
+- `CNY`
+- `USD`
+- `EUR`
+- `GBP`
+- `JPY`
+- `HKD`
+- `TWD`
+- `MYR`
+- `IDR`
+- `THB`
+- `VND`
+- `KRW`
+- `AUD`
+- `NZD`
+- `CAD`
+- `CHF`
+- `INR`
+- `PHP`
+
+Monthly total summaries convert non-SGD rows to SGD with historical daily
+reference rates and include rate-date context when conversion is used.
+
 ## Supported Categories
 
 The MVP category set is curated and stable so parsing, storage, and reporting stay consistent:
@@ -113,10 +144,10 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 ## Out of Scope
 
 - Receipt OCR or image parsing.
-- Bank, card, wallet, or exchange integrations.
+- Bank, card, wallet, or settlement-rate integrations.
 - Budgeting, alerts, recurring transactions, or forecasting.
 - Shared ledgers, bill splitting, reimbursements, or group accounting.
-- Multi-currency conversion. The MVP can store an explicit currency but does not calculate exchange rates.
+- Live trading exchange rates or bank/card settlement-rate matching.
 - Income, investment, asset, liability, or tax tracking.
 - Direct user editing inside Google Sheets as an application workflow.
 - Autonomous agent loops, background financial advice, or tool use by the LLM.

@@ -2,12 +2,13 @@
 
 ## System Boundary
 
-Expense Agent has four primary boundaries:
+Expense Agent has five primary boundaries:
 
 - Telegram is the user interface.
 - Backend services own orchestration, validation, persistence decisions, and replies.
 - The LLM is parser-only and returns structured intent.
 - Google Sheets is the MVP storage system.
+- The exchange-rate provider supplies deterministic historical rates for reporting.
 
 The backend is the only component allowed to decide whether data is valid, whether storage should change, and what Telegram reply should be sent.
 
@@ -40,8 +41,9 @@ The backend is the only component allowed to decide whether data is valid, wheth
 2. The parser identifies `query_monthly_total` intent and month/currency filters.
 3. The application service validates and bounds the query.
 4. The repository reads matching rows from Google Sheets.
-5. The application service formats totals or a compact transaction list.
-6. The bot replies without mutating storage.
+5. The application service converts non-default-currency rows with transaction-date exchange rates when a default-currency total is requested.
+6. The application service formats totals or a compact transaction list.
+7. The bot replies without mutating storage.
 
 ## Component Responsibilities
 
@@ -87,13 +89,14 @@ Owns:
   parser-proposed fields when at least one safe change remains.
 - Enforcing idempotency for Telegram update processing.
 - Formatting confirmation, clarification, empty-result, and error replies.
-- Coordinating repositories and parser ports.
+- Coordinating repositories, parser ports, and exchange-rate providers.
 
 Does not own:
 
 - Provider-specific Telegram HTTP details.
 - Prompt wording or LLM provider internals.
 - Google Sheets API details.
+- Provider-specific exchange-rate HTTP details.
 
 Create-expense orchestration lives in `core/transaction_service.py`. The
 service accepts normalized Telegram message metadata, checks the repository for
@@ -117,7 +120,7 @@ Owns:
 
 - Treating parser output as untrusted input before create-expense writes.
 - Applying configured defaults for date, currency, type, and category.
-- Enforcing positive amount, valid date, ISO-style currency code, expense-only MVP type, and single-record MVP behavior.
+- Enforcing positive amount, valid date, supported mainstream currency, expense-only MVP type, and single-record MVP behavior.
 - Returning explicit validation error codes and user-facing messages for correctable failures.
 
 Does not own:
@@ -131,6 +134,9 @@ parser results plus runtime defaults, returns either a `ValidatedExpense` or a
 validation failure, and never mutates storage. Shared category constants live in
 `core/categories.py` so parser and validator code use the same allowlist without
 making the validator depend on parser prompt details.
+Supported currency constants and aliases live in `core/currencies.py`; missing
+currency defaults to the configured currency, explicit supported currencies are
+preserved, and unsupported currency values fail validation before storage writes.
 
 ### Parser Port
 
@@ -138,7 +144,7 @@ Owns:
 
 - Turning raw user text into a structured parser result.
 - Returning confidence and missing-field information.
-- Normalizing supported categories when confidence is sufficient.
+- Normalizing supported categories and currencies when confidence is sufficient.
 
 Does not own:
 
@@ -146,6 +152,7 @@ Does not own:
 - Sending Telegram messages.
 - Deciding that a transaction should be persisted.
 - Performing updates, deletes, or queries.
+- Performing exchange-rate conversion.
 - Running background agent loops or invoking arbitrary tools.
 
 The parser contract lives in `core/intent_parser.py`. It builds the parser-only
@@ -182,12 +189,32 @@ Application services depend on `GoogleSheetsTransactionRepository` and its
 The concrete `GoogleSheetsValuesClient` wraps the Sheets `spreadsheets().values()`
 API for row reads, appends, and updates.
 
+### Exchange-Rate Provider
+
+Owns:
+
+- Fetching historical daily exchange rates for supported currency pairs.
+- Returning the actual rate date used, including latest previous available rates.
+- Translating provider failures into explicit exchange-rate errors.
+
+Does not own:
+
+- Parsing user text.
+- Mutating transactions.
+- Choosing which transactions belong in a summary.
+
+The provider contract lives in `core/exchange_rates.py`. The production adapter
+lives in `integrations/exchange_rates.py` and uses Frankfurter's public daily
+reference-rate API. The application service uses the provider only for query
+reporting; original transaction amount and currency are never overwritten.
+
 ## Data Ownership
 
 - Raw Telegram text is owned by the Telegram adapter until it is handed to the application service.
 - Parsed intent is owned by the parser port as an untrusted proposal.
 - Validated transaction state is owned by the application service and persisted through the repository.
 - Google Sheets owns durable MVP storage after a write succeeds.
+- Exchange-rate conversions are transient reporting data owned by the application service reply path.
 
 Parser results should be treated as untrusted input. The backend must validate every field before writing to storage.
 
@@ -207,6 +234,7 @@ Expected system errors:
 - Telegram API failure.
 - Parser provider timeout or malformed parser response.
 - Google Sheets API failure.
+- Exchange-rate provider failure.
 - Missing or invalid runtime configuration.
 
 User-correctable errors should produce a clear Telegram reply and no storage mutation. System errors should produce a generic failure reply, preserve enough logs for debugging, and avoid duplicate writes on retry.

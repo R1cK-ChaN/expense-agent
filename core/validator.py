@@ -6,6 +6,7 @@ from enum import StrEnum
 from zoneinfo import ZoneInfo
 
 from core.categories import DEFAULT_EXPENSE_CATEGORY, SUPPORTED_CATEGORY_SET
+from core.currencies import normalize_currency_code
 from core.intent_parser import IntentParserResult, ParserIntent
 
 
@@ -15,7 +16,7 @@ EXPENSE_TYPE = "expense"
 MISSING_AMOUNT_MESSAGE = "这笔支出还缺金额，请补充一下。"
 INVALID_AMOUNT_MESSAGE = "金额需要大于 0，请重新发送。"
 INVALID_DATE_MESSAGE = "日期格式不正确，请重新发送。"
-INVALID_CURRENCY_MESSAGE = "货币代码需要是 3 位字母，请重新发送。"
+INVALID_CURRENCY_MESSAGE = "这个货币暂不支持，请使用 SGD、CNY、USD 等主流货币。"
 UNSUPPORTED_TYPE_MESSAGE = "目前只支持记录支出。"
 MULTIPLE_EXPENSES_MESSAGE = "目前一条消息只能记录一笔支出，请分开发送。"
 PARSER_FAILURE_MESSAGE = "这条消息暂时无法识别，请重新发送。"
@@ -36,7 +37,6 @@ SUPPORTED_UPDATE_FIELDS = frozenset(
     }
 )
 
-_CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
 _AMOUNT_PATTERN = re.compile(r"(?<![\d:/-])\d+(?:\.\d+)?(?![\d:/-])")
 _DATE_OR_TIME_PATTERN = re.compile(
     r"(?<!\d)(?:"
@@ -303,11 +303,10 @@ def _normalize_currency(
     value: str | None,
     context: ValidationContext,
 ) -> str | None:
-    currency = value if value is not None and value.strip() else context.default_currency
-    currency = currency.strip().upper()
-    if not _CURRENCY_PATTERN.fullmatch(currency):
-        return None
-    return currency
+    return normalize_currency_code(
+        value,
+        default_currency=context.default_currency,
+    )
 
 
 def _normalize_amount(value: object) -> Decimal | None:

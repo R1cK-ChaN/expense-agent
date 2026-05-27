@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from core.categories import CATEGORY_GUIDANCE, SUPPORTED_CATEGORIES
+from core.currencies import CURRENCY_PROMPT_GUIDANCE, SUPPORTED_CURRENCIES
 
 REQUIRED_TOP_LEVEL_KEYS = frozenset(
     {
@@ -131,8 +132,14 @@ Supported intents:
 Supported categories:
 {", ".join(SUPPORTED_CATEGORIES)}
 
+Supported currencies:
+{", ".join(SUPPORTED_CURRENCIES)}
+
 Category guidance:
 {CATEGORY_GUIDANCE_TEXT}
+
+Currency guidance:
+{CURRENCY_PROMPT_GUIDANCE}
 
 Return these top-level keys exactly. Use null for non-applicable expense/query
 blocks. Do not copy the schema example confidence value; choose confidence
