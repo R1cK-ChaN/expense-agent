@@ -20,9 +20,9 @@ INVALID_CURRENCY_MESSAGE = "这个货币暂不支持，请使用 SGD、CNY、USD
 UNSUPPORTED_TYPE_MESSAGE = "目前只支持记录支出。"
 MULTIPLE_EXPENSES_MESSAGE = "目前一条消息只能记录一笔支出，请分开发送。"
 PARSER_FAILURE_MESSAGE = "这条消息暂时无法识别，请重新发送。"
-MISSING_UPDATE_FIELDS_MESSAGE = "请说明要修改金额、日期、分类、商家、备注或支付方式。"
+MISSING_UPDATE_FIELDS_MESSAGE = "请说明要修改金额、日期、分类、商家、备注、币种或支付方式。"
 UNSUPPORTED_UPDATE_FIELD_MESSAGE = (
-    "这项修改我还不支持，请改金额、日期、分类、商家、备注或支付方式。"
+    "这项修改我还不支持，请改金额、日期、分类、商家、备注、币种或支付方式。"
 )
 UNSUPPORTED_CATEGORY_MESSAGE = "这个分类暂不支持，请重新发送。"
 
@@ -30,6 +30,7 @@ SUPPORTED_UPDATE_FIELDS = frozenset(
     {
         "date",
         "amount",
+        "currency",
         "category",
         "merchant",
         "note",
@@ -272,6 +273,14 @@ def validate_update_recent_expense(
                     INVALID_DATE_MESSAGE,
                 )
             normalized_fields[field_name] = date_value
+        elif field_name == "currency":
+            currency = _normalize_update_currency(value)
+            if currency is None:
+                return _invalid_update(
+                    ValidationErrorCode.INVALID_CURRENCY,
+                    INVALID_CURRENCY_MESSAGE,
+                )
+            normalized_fields[field_name] = currency
         elif field_name == "category":
             category = _normalize_update_text(value)
             if category is None or category not in SUPPORTED_CATEGORY_SET:
@@ -361,6 +370,13 @@ def _normalize_currency(
         value,
         default_currency=context.default_currency,
     )
+
+
+def _normalize_update_currency(value: object) -> str | None:
+    text = _normalize_update_text(value)
+    if text is None:
+        return None
+    return normalize_currency_code(text)
 
 
 def _normalize_amount(value: object) -> Decimal | None:

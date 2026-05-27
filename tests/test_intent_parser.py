@@ -279,6 +279,143 @@ def test_parser_extracts_update_recent_expense_fields():
     assert result.update_fields == {"category": "交通"}
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_currency"),
+    [
+        ("改成 cny", "CNY"),
+        ("改成人民币", "CNY"),
+        ("币种改成 CNY", "CNY"),
+        ("不是 SGD，是 CNY", "CNY"),
+    ],
+)
+def test_parser_backfills_simple_currency_corrections_from_unknown_intent(
+    text: str,
+    expected_currency: str,
+):
+    llm_client = FakeLLMClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.35,
+            "expense": None,
+            "update_fields": {},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse(text, context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UPDATE_RECENT_EXPENSE
+    assert result.confidence == 0.95
+    assert result.update_fields == {"currency": expected_currency}
+
+
+def test_parser_does_not_turn_attached_currency_create_into_update():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "create_expense",
+            "confidence": 0.9,
+            "expense": {
+                "date": "2026-05-20",
+                "amount": "13",
+                "currency": "CNY",
+                "category": "餐饮",
+                "merchant": "正新鸡排",
+                "payment_method": None,
+                "note": None,
+            },
+            "update_fields": {},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("正新鸡排 13cny", context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.CREATE_EXPENSE
+    assert result.expense is not None
+    assert result.expense.currency == "CNY"
+
+
+def test_parser_does_not_add_currency_when_llm_found_another_update_field():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "update_recent_expense",
+            "confidence": 0.9,
+            "expense": None,
+            "update_fields": {"note": "CNY"},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("备注改成 CNY", context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UPDATE_RECENT_EXPENSE
+    assert result.update_fields == {"note": "CNY"}
+
+
+@pytest.mark.parametrize("text", ["币种不是 SGD", "币种不对 SGD"])
+def test_parser_does_not_backfill_rejected_currency_without_replacement(
+    text: str,
+):
+    llm_client = FakeLLMClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.35,
+            "expense": None,
+            "update_fields": {},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse(text, context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UNKNOWN
+    assert result.update_fields == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "current CNY rate",
+        "current cny expenses",
+        "备注改成 CNY",
+        "备注不是 SGD，是 CNY",
+        "默认货币改成 CNY",
+    ],
+)
+def test_parser_does_not_backfill_non_correction_currency_mentions(
+    text: str,
+):
+    llm_client = FakeLLMClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.35,
+            "expense": None,
+            "update_fields": {},
+            "query": None,
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse(text, context=make_context())
+
+    assert result.is_success is True
+    assert result.intent is ParserIntent.UNKNOWN
+    assert result.update_fields == {}
+
+
 def test_parser_backfills_unambiguous_update_amount_from_text_when_llm_omits_it():
     llm_client = FakeLLMClient(
         {

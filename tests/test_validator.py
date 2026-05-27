@@ -314,7 +314,30 @@ def test_update_validation_accepts_note_updates():
     assert result.update_fields == {"note": "白鸡饭"}
 
 
-def test_update_validation_ignores_unsupported_fields_when_safe_fields_exist():
+@pytest.mark.parametrize(
+    ("currency", "expected"),
+    [
+        ("cny", "CNY"),
+        ("人民币", "CNY"),
+        ("rmb", "CNY"),
+        ("美元", "USD"),
+    ],
+)
+def test_update_validation_accepts_currency_updates(
+    currency: str,
+    expected: str,
+):
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"currency": currency}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is True
+    assert result.errors == ()
+    assert result.update_fields == {"currency": expected}
+
+
+def test_update_validation_keeps_currency_with_other_safe_fields():
     result = validate_update_recent_expense(
         make_update_parser_result(
             update_fields={
@@ -327,12 +350,27 @@ def test_update_validation_ignores_unsupported_fields_when_safe_fields_exist():
 
     assert result.is_valid is True
     assert result.errors == ()
-    assert result.update_fields == {"amount": Decimal("18.60")}
+    assert result.update_fields == {
+        "amount": Decimal("18.60"),
+        "currency": "USD",
+    }
+
+
+def test_update_validation_rejects_unsupported_currency_code():
+    result = validate_update_recent_expense(
+        make_update_parser_result(update_fields={"currency": "ABC"}),
+        context=make_context(),
+    )
+
+    assert result.is_valid is False
+    assert result.update_fields == {}
+    assert result.user_message == INVALID_CURRENCY_MESSAGE
+    assert result.errors[0].code is ValidationErrorCode.INVALID_CURRENCY
 
 
 def test_update_validation_rejects_unsupported_fields_when_no_safe_fields_exist():
     result = validate_update_recent_expense(
-        make_update_parser_result(update_fields={"currency": "USD"}),
+        make_update_parser_result(update_fields={"telegram_user_id": "7"}),
         context=make_context(),
     )
 

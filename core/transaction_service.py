@@ -36,10 +36,16 @@ LOW_CONFIDENCE_MESSAGE = "这条消息我不太确定，请换个说法或补充
 PROCESSING_FAILURE_MESSAGE = "抱歉，暂时没能记账，请稍后再试。"
 EXCHANGE_RATE_FAILURE_MESSAGE = "抱歉，暂时没能取得汇率，请稍后再试。"
 NO_RECENT_EXPENSE_MESSAGE = "我还没有找到你最近的支出记录。"
+SIMILAR_RECENT_EXPENSE_MESSAGE = (
+    "检测到你刚刚记录过类似支出，请确认是要修改上一笔，还是新增一笔"
+)
 MIN_CREATE_EXPENSE_CONFIDENCE = 0.7
 MIN_UPDATE_EXPENSE_CONFIDENCE = 0.7
 MIN_QUERY_MONTHLY_TOTAL_CONFIDENCE = 0.7
 MONTHLY_TOTAL_AMOUNT_QUANTUM = Decimal("0.01")
+RECENT_EXPENSE_RETRY_WINDOW_SECONDS = 10 * 60
+_EXACT_RECENT_EXPENSE_RETRY = "exact"
+_AMBIGUOUS_RECENT_EXPENSE_RETRY = "ambiguous"
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +216,13 @@ class TransactionService:
         if not validation.is_valid or validation.expense is None:
             return validation.user_message or UNKNOWN_INTENT_MESSAGE
 
+        retry_reply = self._handle_recent_create_retry(
+            validation.expense,
+            message=message,
+        )
+        if retry_reply is not None:
+            return retry_reply
+
         record = self._new_transaction_record(
             validation.expense,
             message=message,
@@ -276,6 +289,66 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
 
         self._update_targets_by_message[update_message_key] = updated_record.id
+        return _format_update_confirmation(updated_record)
+
+    def _handle_recent_create_retry(
+        self,
+        expense: ValidatedExpense,
+        *,
+        message: InboundMessage,
+    ) -> str | None:
+        retry_message_key = (
+            message.source_platform,
+            message.source_user_id,
+            message.source_chat_id,
+            message.source_message_id,
+        )
+        transaction_id = self._update_targets_by_message.get(retry_message_key)
+        if transaction_id is not None:
+            try:
+                updated_record = self._repository.update_transaction(
+                    transaction_id,
+                    {"currency": expense.currency},
+                )
+            except TransactionRepositoryError:
+                logger.exception("Failed to update duplicate transaction retry.")
+                return PROCESSING_FAILURE_MESSAGE
+            return _format_update_confirmation(updated_record)
+
+        try:
+            latest_record = self._repository.get_latest_transaction(
+                source_platform=message.source_platform,
+                user_id=message.source_user_id,
+            )
+        except TransactionRepositoryError:
+            logger.exception("Failed to load latest transaction for retry guard.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        if latest_record is None:
+            return None
+
+        decision = _recent_expense_retry_decision(
+            latest_record,
+            expense,
+            received_at=message.received_at,
+            timezone_name=self._timezone,
+        )
+        if decision is None:
+            return None
+
+        if decision == _AMBIGUOUS_RECENT_EXPENSE_RETRY:
+            return _format_similar_recent_expense_reply(latest_record)
+
+        try:
+            updated_record = self._repository.update_transaction(
+                latest_record.id,
+                {"currency": expense.currency},
+            )
+        except TransactionRepositoryError:
+            logger.exception("Failed to update recent transaction retry.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        self._update_targets_by_message[retry_message_key] = updated_record.id
         return _format_update_confirmation(updated_record)
 
     def _handle_query_monthly_total(
@@ -361,6 +434,10 @@ def _format_confirmation(record: TransactionRecord) -> str:
 
 def _format_update_confirmation(record: TransactionRecord) -> str:
     return "已更新：" + _format_record_summary(record)
+
+
+def _format_similar_recent_expense_reply(record: TransactionRecord) -> str:
+    return SIMILAR_RECENT_EXPENSE_MESSAGE + "：" + _format_record_summary(record)
 
 
 def _format_monthly_total_reply(summary: _MonthlyTotalSummary) -> str:
@@ -454,6 +531,117 @@ def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
     return timestamp.astimezone(ZoneInfo(timezone_name)).isoformat()
+
+
+def _recent_expense_retry_decision(
+    record: TransactionRecord,
+    expense: ValidatedExpense,
+    *,
+    received_at: datetime,
+    timezone_name: str,
+) -> str | None:
+    if record.type != "expense":
+        return None
+    if record.date != expense.date:
+        return None
+    if record.amount != expense.amount:
+        return None
+    if record.category != expense.category:
+        return None
+
+    record_currency = normalize_currency_code(record.currency)
+    expense_currency = normalize_currency_code(expense.currency)
+    if (
+        record_currency is None
+        or expense_currency is None
+        or record_currency == expense_currency
+    ):
+        return None
+
+    if not _was_created_recently(
+        record.created_at,
+        received_at=received_at,
+        timezone_name=timezone_name,
+    ):
+        return None
+
+    record_descriptions = _normalized_retry_descriptions(record.merchant, record.note)
+    expense_descriptions = _normalized_retry_descriptions(
+        expense.merchant,
+        expense.note,
+    )
+    if _retry_descriptions_have_exact_match(
+        record_descriptions,
+        expense_descriptions,
+    ):
+        return _EXACT_RECENT_EXPENSE_RETRY
+    if _retry_descriptions_are_similar(record_descriptions, expense_descriptions):
+        return _AMBIGUOUS_RECENT_EXPENSE_RETRY
+
+    return None
+
+
+def _normalized_retry_descriptions(
+    merchant: str | None,
+    note: str | None,
+) -> tuple[str, ...]:
+    descriptions: list[str] = []
+    for text in (merchant, note):
+        if text is None:
+            continue
+        normalized = "".join(text.lower().split())
+        if normalized and normalized not in descriptions:
+            descriptions.append(normalized)
+    return tuple(descriptions)
+
+
+def _retry_descriptions_have_exact_match(
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+) -> bool:
+    return any(description in right for description in left)
+
+
+def _retry_descriptions_are_similar(
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+) -> bool:
+    return any(
+        min(len(left_description), len(right_description)) >= 2
+        and (
+            left_description in right_description
+            or right_description in left_description
+        )
+        for left_description in left
+        for right_description in right
+    )
+
+
+def _was_created_recently(
+    created_at: str,
+    *,
+    received_at: datetime,
+    timezone_name: str,
+) -> bool:
+    created = _parse_timestamp(created_at, timezone_name)
+    if created is None:
+        return False
+
+    received = received_at
+    if received.tzinfo is None:
+        received = received.replace(tzinfo=ZoneInfo(timezone_name))
+    age_seconds = (received - created).total_seconds()
+    return 0 <= age_seconds <= RECENT_EXPENSE_RETRY_WINDOW_SECONDS
+
+
+def _parse_timestamp(value: str, timezone_name: str) -> datetime | None:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
+    return timestamp
 
 
 def _utc_now() -> datetime:
