@@ -71,6 +71,10 @@ Examples:
 Expected behavior:
 
 - Queries read from Google Sheets without writing new transaction rows.
+- Querying, aggregation, exchange-rate conversion, and reply formatting must not
+  append or update any Google Sheets row or cell.
+- A new row may be appended only after a create-expense request passes parsing,
+  validation, and duplicate checks.
 - Supported filters are date range, category, and recent transaction count.
 - The bot replies with totals or a compact list, depending on the query.
 
@@ -110,8 +114,11 @@ Supported mainstream currencies:
 - `INR`
 - `PHP`
 
-Monthly total summaries convert non-SGD rows to SGD with historical daily
-reference rates and include rate-date context when conversion is used.
+Expense confirmations preserve the original foreign-currency amount and show
+its SGD equivalent using the transaction-date reference rate. Spending queries
+accept an inclusive date range, convert every foreign-currency row to SGD using
+its transaction-date rate, and report the SGD total, original foreign-currency
+subtotals, and SGD category totals with percentages.
 
 ## Supported Categories
 
@@ -181,7 +188,7 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 
 ### Queries
 
-- Given a supported total-spend query, when matching transactions exist, then the bot replies with the total amount grouped by currency.
+- Given a supported total-spend query, when matching transactions exist, then the bot replies with the SGD total, original foreign-currency subtotals, and category amounts and percentages in SGD.
 - Given a supported category query, when matching transactions exist, then the bot replies using normalized category names.
 - Given a recent-expenses query, when transactions exist, then the bot replies with a compact list ordered newest first.
 - Given a query has no matching transactions, when the bot handles it, then the bot replies with an empty-result message and does not write to storage.

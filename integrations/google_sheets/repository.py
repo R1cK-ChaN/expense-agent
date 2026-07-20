@@ -246,6 +246,26 @@ class GoogleSheetsTransactionRepository:
             )
         ]
 
+    def list_expenses(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[TransactionRecord]:
+        _validate_date_range(start_date, end_date)
+        return [
+            record
+            for _row_number, record in self._load_records()
+            if (
+                record.source_platform == str(source_platform)
+                and record.source_user_id == str(user_id)
+                and record.type == "expense"
+                and start_date <= record.date <= end_date
+            )
+        ]
+
     def list_transactions(self) -> list[TransactionRecord]:
         return [record for _row_number, record in self._load_records()]
 
@@ -511,6 +531,16 @@ def _validate_month(month: str) -> None:
         datetime.strptime(month, "%Y-%m")
     except ValueError as error:
         raise ValueError("month must use YYYY-MM format") from error
+
+
+def _validate_date_range(start_date: str, end_date: str) -> None:
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise ValueError("dates must use YYYY-MM-DD format") from error
+    if start > end:
+        raise ValueError("start_date must not be after end_date")
 
 
 def _validate_transaction_sheet_schema(rows: Sequence[Sequence[str]]) -> None:

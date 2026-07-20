@@ -76,6 +76,39 @@ def test_create_expense_appends_transaction_and_confirms_saved_summary():
     assert saved_record.updated_at == "2026-05-20T13:00:00+08:00"
 
 
+def test_create_foreign_expense_confirms_original_and_local_amount():
+    parser = FakeParser(
+        make_parser_result(
+            amount=Decimal("30"),
+            date="2026-05-20",
+            currency="CNY",
+            category="餐饮",
+            merchant="海底捞",
+        )
+    )
+    repository = FakeTransactionRepository()
+    exchange_rate_provider = FakeExchangeRateProvider(
+        rates={
+            ("CNY", "SGD", "2026-05-20"): (Decimal("0.18"), "2026-05-20")
+        }
+    )
+    service = make_service(
+        parser=parser,
+        repository=repository,
+        exchange_rate_provider=exchange_rate_provider,
+    )
+
+    reply = service.handle_message(make_message(text="海底捞 30 CNY"))
+
+    assert reply == (
+        "已记录：2026-05-20 餐饮 30 CNY 海底捞"
+        "（折合 5.40 SGD，汇率日 2026-05-20）"
+    )
+    assert exchange_rate_provider.calls == [
+        (Decimal("30"), "CNY", "SGD", "2026-05-20")
+    ]
+
+
 def test_create_expense_uses_generic_source_metadata_for_wechat_message():
     parser = FakeParser(
         make_parser_result(
@@ -834,7 +867,11 @@ def test_query_monthly_total_returns_current_user_sgd_total(text: str):
 
     reply = service.handle_telegram_message(make_message(text=text))
 
-    assert reply == "本月支出合计：123.40 SGD"
+    assert reply == (
+        "2026-05-01 至 2026-05-31 支出合计：123.40 SGD\n"
+        "分类占比：\n"
+        "- 餐饮：123.40 SGD（100.00%）"
+    )
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
     assert repository.appended_records == []
     assert repository.update_calls == []
@@ -854,7 +891,11 @@ def test_query_monthly_total_uses_message_timezone_for_current_month():
         )
     )
 
-    assert reply == "本月支出合计：8.80 SGD"
+    assert reply == (
+        "2026-05-01 至 2026-05-31 支出合计：8.80 SGD\n"
+        "分类占比：\n"
+        "- 餐饮：8.80 SGD（100.00%）"
+    )
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
@@ -867,7 +908,11 @@ def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
 
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
-    assert reply == "本月支出合计：11.00 SGD"
+    assert reply == (
+        "2026-05-01 至 2026-05-31 支出合计：11.00 SGD\n"
+        "分类占比：\n"
+        "- 餐饮：11.00 SGD（100.00%）"
+    )
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
@@ -910,9 +955,10 @@ def test_query_monthly_total_converts_mixed_currencies_to_sgd():
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == (
-        "本月支出合计：22.15 SGD\n"
-        "其中换算：30 CNY -> 5.40 SGD (汇率日 2026-05-02); "
-        "5 USD -> 6.75 SGD (汇率日 2026-05-02)"
+        "2026-05-01 至 2026-05-31 支出合计：22.15 SGD\n"
+        "外币支出（2 种）：30 CNY；5 USD\n"
+        "分类占比：\n"
+        "- 餐饮：22.15 SGD（100.00%）"
     )
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
     assert exchange_rate_provider.calls == [
@@ -921,7 +967,43 @@ def test_query_monthly_total_converts_mixed_currencies_to_sgd():
     ]
 
 
-def test_query_monthly_total_rejects_non_current_month_without_storage_lookup():
+def test_query_date_range_returns_category_amounts_and_percentages():
+    parser = FakeParser(
+        make_query_parser_result(
+            start_date="2026-05-10",
+            end_date="2026-05-20",
+        )
+    )
+    repository = FakeTransactionRepository(
+        monthly_records=[
+            make_record(
+                transaction_id="food",
+                amount=Decimal("60"),
+                category="餐饮",
+            ),
+            make_record(
+                transaction_id="travel",
+                amount=Decimal("40"),
+                category="交通",
+            ),
+        ]
+    )
+    service = make_service(parser=parser, repository=repository)
+
+    reply = service.handle_message(make_message(text="5月10日到20日花了多少？"))
+
+    assert reply == (
+        "2026-05-10 至 2026-05-20 支出合计：100.00 SGD\n"
+        "分类占比：\n"
+        "- 餐饮：60.00 SGD（60.00%）\n"
+        "- 交通：40.00 SGD（40.00%）"
+    )
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-05-10", "2026-05-20")
+    ]
+
+
+def test_query_monthly_total_supports_prior_month():
     parser = FakeParser(make_query_parser_result(month="2026-04", currency="SGD"))
     repository = FakeTransactionRepository(
         monthly_records=[make_record(amount=Decimal("123.4"))]
@@ -930,8 +1012,14 @@ def test_query_monthly_total_rejects_non_current_month_without_storage_lookup():
 
     reply = service.handle_telegram_message(make_message(text="上个月花了多少？"))
 
-    assert reply == "我目前只支持查询本月 SGD 支出总额。"
-    assert repository.list_monthly_calls == []
+    assert reply == (
+        "2026-04-01 至 2026-04-30 支出合计：123.40 SGD\n"
+        "分类占比：\n"
+        "- 餐饮：123.40 SGD（100.00%）"
+    )
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-04-01", "2026-04-30")
+    ]
 
 
 def test_query_monthly_total_rejects_non_sgd_currency_without_storage_lookup():
@@ -943,7 +1031,7 @@ def test_query_monthly_total_rejects_non_sgd_currency_without_storage_lookup():
 
     reply = service.handle_telegram_message(make_message(text="这个月 USD 花了多少？"))
 
-    assert reply == "我目前只支持查询本月 SGD 支出总额。"
+    assert reply == "我目前只支持以本币 SGD 汇总支出。"
     assert repository.list_monthly_calls == []
 
 
@@ -956,7 +1044,7 @@ def test_query_monthly_total_rejects_unsupported_currency_without_storage_lookup
 
     reply = service.handle_telegram_message(make_message(text="这个月 ABC 花了多少？"))
 
-    assert reply == "我目前只支持查询本月 SGD 支出总额。"
+    assert reply == "我目前只支持以本币 SGD 汇总支出。"
     assert repository.list_monthly_calls == []
 
 
@@ -967,7 +1055,7 @@ def test_query_monthly_total_formats_zero_sgd_total():
 
     reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
 
-    assert reply == "本月支出合计：0.00 SGD"
+    assert reply == "2026-05-01 至 2026-05-31 支出合计：0.00 SGD"
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 
@@ -1100,6 +1188,8 @@ def make_query_parser_result(
     confidence: float = 0.9,
     month: str = "2026-05",
     currency: str | None = "SGD",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> IntentParserResult:
     return IntentParserResult(
         is_success=True,
@@ -1107,7 +1197,12 @@ def make_query_parser_result(
         confidence=confidence,
         expense=None,
         update_fields={},
-        query=MonthlyTotalQuery(month=month, currency=currency),
+        query=MonthlyTotalQuery(
+            month=None if start_date is not None else month,
+            currency=currency,
+            start_date=start_date,
+            end_date=end_date,
+        ),
         missing_fields=(),
     )
 
@@ -1216,6 +1311,7 @@ class FakeTransactionRepository:
         self.update_calls: list[tuple[str, dict[str, object]]] = []
         self.updated_records: list[TransactionRecord] = []
         self.list_monthly_calls: list[tuple[str, str, str]] = []
+        self.list_expense_calls: list[tuple[str, str, str, str]] = []
 
     def set_latest_record(self, user_id: str, record: TransactionRecord) -> None:
         self._latest_records[("telegram", user_id)] = record
@@ -1278,6 +1374,25 @@ class FakeTransactionRepository:
         if self._fail_list_monthly:
             raise TransactionRepositoryError("list failed")
 
+        return list(self._monthly_records)
+
+    def list_expenses(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[TransactionRecord]:
+        self.list_expense_calls.append(
+            (source_platform, user_id, start_date, end_date)
+        )
+        if start_date.endswith("-01") and end_date[:7] == start_date[:7]:
+            self.list_monthly_calls.append(
+                (source_platform, user_id, start_date[:7])
+            )
+        if self._fail_list_monthly:
+            raise TransactionRepositoryError("list failed")
         return list(self._monthly_records)
 
 

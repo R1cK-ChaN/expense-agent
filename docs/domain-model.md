@@ -111,10 +111,14 @@ Update recent expense fields:
 
 - `update_fields`: map of fields to replace on the user's latest expense after validation.
 
-Monthly total query fields:
+Expense total query fields:
 
-- `month`: explicit or inferred month as `YYYY-MM`.
-- `currency`: currency code for the total, or null when omitted.
+- `start_date`: inclusive range start as `YYYY-MM-DD`.
+- `end_date`: inclusive range end as `YYYY-MM-DD`.
+- `currency`: reporting currency, or null to use the configured local currency.
+
+Legacy parser responses containing `month` as `YYYY-MM` remain accepted and
+are expanded to the full calendar month.
 
 Invariants:
 

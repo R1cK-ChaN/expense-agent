@@ -34,11 +34,11 @@ uvicorn app.main:app --reload
 Copy `.env.example` for local configuration. The health endpoint imports and
 runs without real external credentials.
 
-Set `STORAGE_BACKEND=google_sheets` with Google credentials and sheet settings
-for the default path, or `STORAGE_BACKEND=postgres` with `DATABASE_URL` for
-PostgreSQL. Switching back to `google_sheets` restores the spreadsheet path
-without code changes. Google Sheets setup for the MVP storage template is
-documented in `docs/google-sheets-template.md`.
+The bot uses Google Sheets as its canonical ledger. Configure
+`GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SHEET_ID`; spending queries read the
+`Transactions` worksheet without writing to it, while new expenses append one
+row. PostgreSQL remains available only to migration, verification, and export
+tooling. Google Sheets setup is documented in `docs/google-sheets-template.md`.
 The Google Sheets to PostgreSQL backfill, verification, production cutover, and
 rollback runbook is documented in `docs/postgres-backfill-cutover.md`.
 

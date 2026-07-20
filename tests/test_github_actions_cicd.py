@@ -43,8 +43,6 @@ def test_cloud_run_deploy_script_builds_deploys_and_checks_health():
     assert "CLOUD_RUN_SECRET_MAPPINGS" in script
     assert "PARSER_MODEL" in script
     assert "GOOGLE_SHEET_ID" in script
-    assert "STORAGE_BACKEND" in script
-    assert "DATABASE_URL" in script
     assert "TELEGRAM_BOT_TOKEN" in script
     assert "WECHAT_TOKEN" in script
     assert "GOOGLE_SERVICE_ACCOUNT_JSON" in script
@@ -52,7 +50,7 @@ def test_cloud_run_deploy_script_builds_deploys_and_checks_health():
     assert "curl --fail" in script
 
 
-def test_cloud_run_deploy_script_allows_postgres_backend_without_google_settings(
+def test_cloud_run_deploy_script_rejects_missing_google_settings_even_with_postgres(
     tmp_path,
 ):
     install_fake_deploy_commands(tmp_path)
@@ -72,18 +70,16 @@ def test_cloud_run_deploy_script_allows_postgres_backend_without_google_settings
         },
     )
 
-    assert result.returncode == 0
-    assert "::error::" not in result.stdout
+    assert result.returncode == 1
+    assert "::error::CLOUD_RUN_ENV_VARS must include GOOGLE_SHEET_ID=..." in result.stdout
 
 
-def test_cloud_run_deploy_script_requires_database_url_for_postgres(tmp_path):
+def test_cloud_run_deploy_script_requires_google_credentials(tmp_path):
     install_fake_deploy_commands(tmp_path)
     result = run_deploy_script(
         tmp_path,
         {
-            "CLOUD_RUN_ENV_VARS": (
-                "PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres"
-            ),
+            "CLOUD_RUN_ENV_VARS": "PARSER_MODEL=gpt-4.1-mini,GOOGLE_SHEET_ID=sheet-id",
             "CLOUD_RUN_SECRET_MAPPINGS": (
                 "TELEGRAM_BOT_TOKEN=telegram-token:latest,"
                 "TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,"
@@ -95,7 +91,7 @@ def test_cloud_run_deploy_script_requires_database_url_for_postgres(tmp_path):
 
     assert result.returncode == 1
     assert (
-        "::error::CLOUD_RUN_SECRET_MAPPINGS must include DATABASE_URL=..."
+        "::error::CLOUD_RUN_SECRET_MAPPINGS must include GOOGLE_SERVICE_ACCOUNT_JSON=..."
         in result.stdout
     )
 
@@ -123,8 +119,7 @@ def run_deploy_script(
         "ARTIFACT_REGISTRY_REPOSITORY": "expense-agent",
         "CLOUD_RUN_ENV_VARS": (
             "PARSER_MODEL=gpt-4.1-mini,"
-            "GOOGLE_SHEET_ID=sheet-id,"
-            "STORAGE_BACKEND=google_sheets"
+            "GOOGLE_SHEET_ID=sheet-id"
         ),
         "CLOUD_RUN_SECRET_MAPPINGS": (
             "TELEGRAM_BOT_TOKEN=telegram-token:latest,"

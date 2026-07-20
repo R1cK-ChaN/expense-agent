@@ -1,5 +1,11 @@
 # PostgreSQL Backfill And Cutover
 
+> Historical migration runbook: PostgreSQL is no longer a selectable ledger
+> backend for the business bot. Google Sheets is the canonical source of truth.
+> The PostgreSQL commands below are retained only for offline migration,
+> verification, and export operations; do not use the Cutover section for the
+> production bot.
+
 This runbook migrates existing Google Sheets transaction rows into PostgreSQL
 and switches production writes only after verification. The migration scripts
 default to read-only dry-run behavior; writing to PostgreSQL requires the

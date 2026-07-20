@@ -306,6 +306,33 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
     ]
 
 
+def test_list_expenses_filters_inclusive_date_range():
+    database = InMemoryPostgresDatabase()
+    repository = make_repository(database)
+    for transaction_id, transaction_date in (
+        ("before", "2026-05-09"),
+        ("start", "2026-05-10"),
+        ("end", "2026-05-20"),
+        ("after", "2026-05-21"),
+    ):
+        repository.append_transaction(
+            make_record(
+                transaction_id=transaction_id,
+                source_message_id=transaction_id,
+                date=transaction_date,
+            )
+        )
+
+    records = repository.list_expenses(
+        source_platform="telegram",
+        user_id="42",
+        start_date="2026-05-10",
+        end_date="2026-05-20",
+    )
+
+    assert [record.id for record in records] == ["start", "end"]
+
+
 def test_list_transactions_returns_all_records_for_backfill_verification():
     database = InMemoryPostgresDatabase()
     repository = make_repository(database)
@@ -763,6 +790,25 @@ class InMemoryPostgresConnection:
             and params["month_start"]
             <= transaction["transaction_date"]
             < params["month_end"]
+        ]
+        rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
+        return rows
+
+    def _postgres_repository_select_transactions_by_date_range(
+        self,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        identity = self._find_identity(params["platform"], params["platform_user_id"])
+        if identity is None:
+            return []
+        rows = [
+            self._transaction_row(transaction)
+            for transaction in self.database.transactions.values()
+            if transaction["user_id"] == identity["user_id"]
+            and transaction["transaction_type"] == "expense"
+            and params["start_date"]
+            <= transaction["transaction_date"]
+            <= params["end_date"]
         ]
         rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
         return rows

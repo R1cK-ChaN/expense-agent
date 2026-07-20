@@ -42,11 +42,11 @@ The backend is the only component allowed to decide whether data is valid, wheth
 ### Query Transactions
 
 1. Telegram or WeChat receives a query request.
-2. The parser identifies `query_monthly_total` intent and month/currency filters.
+2. The parser identifies `query_monthly_total` intent and inclusive start/end dates.
 3. The application service validates and bounds the query.
 4. The repository reads matching rows from Google Sheets.
-5. The application service converts non-default-currency rows with transaction-date exchange rates when a default-currency total is requested.
-6. The application service formats totals or a compact transaction list.
+5. The application service converts non-default-currency rows with transaction-date exchange rates.
+6. The application service formats the local-currency total, original foreign-currency subtotals, and local-currency category amounts and percentages.
 7. The platform adapter replies without mutating storage.
 
 ### Google Sheets Export Projection

@@ -456,6 +456,31 @@ def test_list_monthly_expenses_filters_user_type_and_month_across_currencies():
     ]
 
 
+def test_list_expenses_filters_inclusive_date_range():
+    sheets_client = InMemorySheetsClient(
+        [
+            transaction_header_row(),
+            make_row(transaction_id="before", date="2026-05-09"),
+            make_row(transaction_id="start", date="2026-05-10"),
+            make_row(transaction_id="end", date="2026-05-20"),
+            make_row(transaction_id="after", date="2026-05-21"),
+        ]
+    )
+    repository = GoogleSheetsTransactionRepository(
+        sheet_id="sheet-1",
+        sheets_client=sheets_client,
+    )
+
+    records = repository.list_expenses(
+        source_platform="telegram",
+        user_id="42",
+        start_date="2026-05-10",
+        end_date="2026-05-20",
+    )
+
+    assert [record.id for record in records] == ["start", "end"]
+
+
 def test_list_transactions_returns_all_non_empty_transaction_rows():
     sheets_client = InMemorySheetsClient(
         [
