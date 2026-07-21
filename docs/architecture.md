@@ -219,6 +219,29 @@ Provider-specific chat completion HTTP code lives in `integrations/llm_client.py
 The adapter uses an OpenAI-compatible JSON chat-completions request and exposes
 only the `complete_json` method required by the parser port.
 
+### Function Selection Transition
+
+Issue #59 is introducing a replacement boundary without switching production
+runtime traffic prematurely:
+
+- `core/function_calls.py` owns the provider-neutral application-function
+  allowlist, strict tool schemas, untrusted proposals, and ordered non-empty
+  batches.
+- `core/function_selector.py` supplies only the current message and explicit
+  backend context, requests one complete batch, and has no execution or reply
+  responsibility.
+- `integrations/llm_client.py` hides the OpenAI Responses API payload and accepts
+  only completed allowlisted function calls; assistant text, empty batches,
+  unknown functions, and malformed arguments fail closed.
+- `core/statistics.py` owns bounded period resolution, read-only filters,
+  currency conversion, aggregation, comparisons, ranking, and deterministic
+  statistics rendering. The existing monthly query path already reuses its
+  summary calculation and renderer.
+
+These modules are not yet the default IM runtime. `docs/now.md` owns the
+transitional state until the validated batch executor, PostgreSQL atomicity,
+pending requests, and runtime wiring are complete.
+
 ### Google Sheets Repository
 
 Owns:

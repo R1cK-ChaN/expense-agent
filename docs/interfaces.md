@@ -26,6 +26,21 @@ owning documents linked below.
 - Detail: [Domain Model](domain-model.md#parser-result) and
   [Architecture](architecture.md#parser-port).
 
+### Function Selection (Issue #59 Transition)
+
+- Input: one current user message plus backend-owned date, timezone, currency,
+  and any bounded pending-request context.
+- Output: one non-empty ordered batch containing only allowlisted application
+  function proposals with strict structured arguments.
+- Contract: the model runs once, never receives operation results, never accesses
+  a repository, and never produces user-visible reply text. Every proposal is
+  untrusted until backend validation succeeds.
+- Transition: the provider-neutral catalog and Responses API adapter exist, but
+  production remains on the parser path until the complete batch executor is
+  validated under Issue #59.
+- Detail: [Domain Model](domain-model.md#canonical-language) and
+  [Architecture](architecture.md#function-selection-transition).
+
 ### Authoritative Ledger Repository
 
 - Input: validated transaction commands and source-message identity.
@@ -46,6 +61,18 @@ owning documents linked below.
   mutate transaction or projection state.
 - Detail: [Requirements](requirements.md#query-stored-spending) and
   [Architecture](architecture.md#query-transactions).
+
+### Deterministic Statistics
+
+- Input: one internal user, a backend-resolved bounded date range, optional
+  validated filters, and an approved reporting currency.
+- Output: typed summaries, comparisons, ranked expenses, or recent expenses
+  rendered without an LLM.
+- Contract: repository access is read-only; date resolution, filtering,
+  conversion, aggregation, ranking, percentages, and final text are owned by
+  backend code.
+- Detail: [Requirements](requirements.md#query-stored-spending) and
+  [Architecture](architecture.md#function-selection-transition).
 
 ### Google Sheets Projection
 
