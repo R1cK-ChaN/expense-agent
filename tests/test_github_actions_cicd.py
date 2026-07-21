@@ -120,6 +120,34 @@ def test_projection_job_rejects_the_production_bot_runtime_identity(tmp_path):
     assert "production bot must use separate service accounts" in result.stdout
 
 
+def test_projection_scheduler_rejects_the_production_bot_runtime_identity(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    result = subprocess.run(
+        ["bash", "scripts/deploy_sheet_projection_job.sh"],
+        cwd=REPO_ROOT,
+        env={
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "GCP_PROJECT_ID": "project-id",
+            "CLOUD_RUN_REGION": "asia-southeast1",
+            "SHEET_PROJECTION_JOB": "expense-sheet-projection",
+            "SHEET_PROJECTION_IMAGE_URI": "image.example/expense-agent:sha",
+            "BOT_RUNTIME_SERVICE_ACCOUNT": "bot@example.test",
+            "SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT": "projection@example.test",
+            "SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT": "bot@example.test",
+            "SHEET_PROJECTION_SECRET_MAPPINGS": (
+                "DATABASE_URL=database-url:latest,"
+                "GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest"
+            ),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "scheduler and production bot must use separate service accounts" in result.stdout
+
+
 def test_projection_job_updates_an_existing_schedule_idempotently(tmp_path):
     install_fake_deploy_commands(tmp_path)
     command_log = tmp_path / "gcloud.log"

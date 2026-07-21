@@ -94,8 +94,8 @@ Configure these variables in each GitHub environment:
 | `SHEET_PROJECTION_SCHEDULE` | Cron schedule; defaults to every five minutes. |
 | `SHEET_PROJECTION_SCHEDULE_TIMEZONE` | Scheduler timezone; defaults to `Etc/UTC`. |
 
-The deployment script rejects reusing either the scheduler identity or the
-production bot runtime identity for the projection job. IAM grants remain
+The deployment script enforces pairwise separation among the bot runtime,
+projection job, and scheduler invocation identities. IAM grants remain
 environment-owned prerequisites; the script does not
 broaden IAM. Re-running the workflow updates the named job and schedule rather
 than creating duplicates.

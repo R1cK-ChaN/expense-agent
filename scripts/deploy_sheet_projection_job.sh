@@ -29,6 +29,11 @@ if [[ "${SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT}" == "${BOT_RUNTIME_SERVICE_AC
   exit 1
 fi
 
+if [[ "${SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT}" == "${BOT_RUNTIME_SERVICE_ACCOUNT}" ]]; then
+  echo "::error::scheduler and production bot must use separate service accounts"
+  exit 1
+fi
+
 has_mapping_key() {
   local mappings="$1"
   local expected_key="$2"

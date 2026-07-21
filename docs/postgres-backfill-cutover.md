@@ -108,6 +108,12 @@ the backfill, and rerun verification. Keep runtime on its current backend.
    Cloud Scheduler trigger executes the Cloud Run Job on the configured cadence
    and that repeated workflow runs update, rather than duplicate, both resources.
 
+If an older projection build ever wrote rows and advanced
+`google_sheet_exports.last_synced_event_id` before the `Ledger` worksheet was
+introduced, preserve the cursor value, reset the affected projection cursor,
+replay all events into `Ledger`, and verify the resulting rows before enabling
+the schedule. If no older projection build ran, no cursor reset is needed.
+
 ## Production Cutover
 
 Production cutover requires explicit approval after the backfill verification
