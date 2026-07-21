@@ -1,3 +1,5 @@
+import logging
+
 from fastapi.testclient import TestClient
 
 from app.telegram_webhook import DEFAULT_TEXT_MESSAGE_REPLY
@@ -21,6 +23,28 @@ def test_health_endpoint_returns_service_identity():
         "status": "ok",
         "service": "expense-agent",
     }
+
+
+def test_create_app_emits_function_batch_outcome_logs(capsys):
+    from app import main as app_main
+
+    logger = logging.getLogger("core.function_batch_handler")
+    previous_level = logger.level
+    previous_handlers = list(logger.handlers)
+    previous_propagate = logger.propagate
+    logger.handlers.clear()
+    logger.setLevel(logging.NOTSET)
+    try:
+        app_main.create_app()
+        assert logger.level == logging.INFO
+        assert logger.propagate is False
+        logger.info("function_batch_observability_test")
+        assert "function_batch_observability_test" in capsys.readouterr().err
+    finally:
+        logger.handlers.clear()
+        logger.handlers.extend(previous_handlers)
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
 
 
 def test_configured_app_wires_transaction_service(monkeypatch):
