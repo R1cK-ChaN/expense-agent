@@ -139,6 +139,10 @@ if [[ -n "${CLOUD_RUN_SERVICE_ACCOUNT:-}" ]]; then
   deploy_args+=("--service-account=${CLOUD_RUN_SERVICE_ACCOUNT}")
 fi
 
+if [[ -n "${CLOUD_SQL_INSTANCE:-}" ]]; then
+  deploy_args+=("--set-cloudsql-instances=${CLOUD_SQL_INSTANCE}")
+fi
+
 echo "Deploying ${CLOUD_RUN_SERVICE}"
 gcloud run deploy "${deploy_args[@]}"
 

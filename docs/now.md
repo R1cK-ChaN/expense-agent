@@ -6,8 +6,7 @@ as the project advances.
 
 ## Current State
 
-- PR #53 implements Issue #52 and remains a draft pending final review and an
-  explicit merge decision.
+- PR #53 and Issues #52/#54 are merged and closed.
 - PostgreSQL authority is accepted system intent, while production cutover has
   not been performed. The deployed production storage setting must not be
   inferred from merged or reviewed code.
@@ -20,10 +19,9 @@ as the project advances.
 
 ## Active Work
 
-- Issue #52: finish review and delivery of PostgreSQL-authoritative storage,
-  migration, projection, and rollback support in PR #53.
-- Issue #54: establish and verify this project handbook in the same PR at the
-  repository owner's direction.
+- Issue #55: add secure Cloud SQL attachment support, provision the approved
+  cost-prioritized production database, verify backfill, and perform the
+  explicitly approved PostgreSQL cutover.
 
 ## Blockers
 
@@ -33,22 +31,22 @@ as the project advances.
 
 ## Open Decisions
 
-- Whether and when to approve production cutover after staging validation.
+- Production cutover is approved for Issue #55 only after its backfill and
+  verification gates pass.
 - When post-cutover evidence is sufficient to remove the temporary Google
   Sheets runtime rollback path; that cleanup is outside Issues #52 and #54.
 
 ## Validation State
 
-- The handbook slice passes 293 tests, repository-local Markdown link checks,
-  `git diff --check`, and a Codex review with no material findings.
-- The preceding PR head passed GitHub Pytest and GitGuardian checks; CI must
-  rerun for the handbook commit after it is pushed.
-- No production cutover or production projection schedule has been executed as
-  part of this work.
+- Merge commit `b710883` is deployed and healthy in production while retaining
+  the Google Sheets backend.
+- No production cutover or production projection schedule has yet been
+  executed. Issue #55 must record fresh verification evidence before either.
 
 ## Safe Next Actions
 
-1. Verify handbook ownership, links, and the full test suite.
-2. Review the complete PR diff and fix only material findings.
-3. Push the documentation slice and update Issues #52 and #54 plus PR #53.
-4. Keep the PR draft until the repository owner explicitly chooses readiness.
+1. Merge tested Cloud SQL attachment support without changing the active backend.
+2. Provision the approved single-zone database and isolated runtime identities.
+3. Run migration, dry-run backfill, executed backfill, and verification.
+4. Cut over Cloud Run only after verification passes, then deploy and validate
+   the projection schedule.

@@ -68,6 +68,11 @@ schedule_timezone="${SHEET_PROJECTION_SCHEDULE_TIMEZONE:-Etc/UTC}"
 default_timezone="${DEFAULT_TIMEZONE:-Asia/Singapore}"
 job_uri="https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/${CLOUD_RUN_REGION}/jobs/${SHEET_PROJECTION_JOB}:run"
 
+cloud_sql_args=()
+if [[ -n "${CLOUD_SQL_INSTANCE:-}" ]]; then
+  cloud_sql_args+=("--set-cloudsql-instances=${CLOUD_SQL_INSTANCE}")
+fi
+
 echo "Deploying projection job ${SHEET_PROJECTION_JOB}"
 gcloud run jobs deploy "${SHEET_PROJECTION_JOB}" \
   --image="${SHEET_PROJECTION_IMAGE_URI}" \
@@ -79,6 +84,7 @@ gcloud run jobs deploy "${SHEET_PROJECTION_JOB}" \
   --set-env-vars="DEFAULT_TIMEZONE=${default_timezone}" \
   --set-secrets="${SHEET_PROJECTION_SECRET_MAPPINGS}" \
   --max-retries=1 \
+  "${cloud_sql_args[@]}" \
   --quiet
 
 scheduler_args=(

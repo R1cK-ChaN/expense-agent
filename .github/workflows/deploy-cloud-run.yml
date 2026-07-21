@@ -51,6 +51,7 @@ jobs:
       CLOUD_RUN_ENV_VARS: ${{ vars.CLOUD_RUN_ENV_VARS }}
       CLOUD_RUN_SECRET_MAPPINGS: ${{ vars.CLOUD_RUN_SECRET_MAPPINGS }}
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
+      CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
 
     steps:
       - name: Check out repository
