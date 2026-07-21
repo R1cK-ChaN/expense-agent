@@ -30,7 +30,7 @@ Configure these as repository variables or production environment variables:
 | `CLOUD_RUN_REGION` | Cloud Run and Artifact Registry region, for example `asia-southeast1`. |
 | `CLOUD_RUN_SERVICE` | Cloud Run service name, for example `expense-agent`. |
 | `ARTIFACT_REGISTRY_REPOSITORY` | Docker Artifact Registry repository name. |
-| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL`; use `STORAGE_BACKEND=postgres` in staging and only after approved production cutover. |
+| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. The legacy path requires `PARSER_MODEL`. The function path requires `FUNCTION_BATCHES_ENABLED=true`, `AGENT_MODEL=gpt-5.5`, and `STORAGE_BACKEND=postgres`. |
 | `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include parser and IM-provider secrets plus `DATABASE_URL` for PostgreSQL or `GOOGLE_SERVICE_ACCOUNT_JSON` for the rollback backend. |
 
 Optional variables:
@@ -46,6 +46,20 @@ Example non-secret config:
 ```text
 SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres
 ```
+
+Staging function-batch example after migration `0004` is applied:
+
+```text
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,STORAGE_BACKEND=postgres
+```
+
+Keep `FUNCTION_BATCHES_ENABLED=false` in production until staging create,
+multi-create, update, duplicate-delivery, clarification, and statistics smokes
+pass. Disable it to return immediately to the legacy parser handler; the schema
+and legacy duplicate queries remain compatible with batch-created rows.
+When the variable is omitted, the deploy script explicitly writes
+`FUNCTION_BATCHES_ENABLED=false` so Cloud Run cannot retain a prior enabled
+value across rollback deployments.
 
 Example Secret Manager mappings:
 

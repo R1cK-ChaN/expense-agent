@@ -15,6 +15,8 @@ You may select multiple functions, including multiple record_expense calls.
 Never produce final user-visible text. Never calculate financial totals.
 Never access a ledger, invent missing amounts, or request destructive actions.
 Use request_clarification or reject_unsupported_request when appropriate.
+When bounded pending-request context is present, combine it only with the
+current message to complete or replace that request; it is not chat history.
 The backend validates every proposal and owns all execution and replies.
 """.strip()
 
@@ -35,6 +37,7 @@ class FunctionSelectionContext:
     today: date
     timezone: str
     default_currency: str
+    pending_request: Mapping[str, object] | None = None
 
 
 class FunctionSelector:
@@ -60,6 +63,7 @@ def _build_user_prompt(text: str, context: FunctionSelectionContext) -> str:
             f"TODAY: {context.today.isoformat()}",
             f"TIMEZONE: {context.timezone}",
             f"DEFAULT_CURRENCY: {context.default_currency}",
+            f"PENDING_REQUEST: {context.pending_request!r}",
             "USER_MESSAGE:",
             text,
         ]

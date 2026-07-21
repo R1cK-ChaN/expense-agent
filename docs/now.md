@@ -8,7 +8,8 @@ as the project advances.
 
 - PR #53 and Issues #52/#54 are merged and closed.
 - PostgreSQL is the deployed production source of truth. Cloud Run revision
-  `expense-agent-00025-wzf` serves 100% of traffic with
+  `expense-agent-00027-kh2` served 100% of traffic at the latest Issue #59 log
+  inspection with
   `STORAGE_BACKEND=postgres`, a Secret Manager `DATABASE_URL`, and an
   authenticated Cloud SQL attachment.
 - Production uses a cost-prioritized PostgreSQL 16 Cloud SQL Enterprise
@@ -25,10 +26,11 @@ as the project advances.
 
 - Issue #59: replace parser-only interpretation with one-shot function-call
   batches, deterministic backend replies, GPT-5.5, and deterministic statistics.
-- The function-batch domain language and provider-neutral contract are being
-  introduced incrementally. Production still uses the existing parser-only
-  runtime until the complete Issue #59 path passes staging validation and is
-  explicitly approved for production exposure.
+- The GPT-5.5 Responses selector, deterministic executor/statistics/replies,
+  PostgreSQL batch idempotency, and bounded pending request are implemented
+  behind `FUNCTION_BATCHES_ENABLED=false`. Production still uses the existing
+  parser-only runtime until migration and staging smokes pass and exposure is
+  explicitly approved.
 
 ## Blockers
 
@@ -52,11 +54,14 @@ as the project advances.
 - Manual and Scheduler-triggered projection Job executions both completed
   successfully; the Scheduler remains enabled on a five-minute cadence.
 - Pull requests #56 and #57 passed CI, GitGuardian, and material-finding review.
+- Issue #59 local verification passes 348 tests after final runtime wiring;
+  no production configuration has been changed.
 
 ## Safe Next Actions
 
-1. Monitor the first normal production create, update, duplicate-delivery, and
-   spending-query traffic against PostgreSQL and its audit events.
+1. Apply migration `0004` in staging, enable function batches there with
+   `AGENT_MODEL=gpt-5.5`, and smoke create/multi-create/update/replay/pending and
+   all statistics functions.
 2. Keep the Google Sheets rollback credentials and unchanged `Transactions`
    worksheet until an explicit stabilization decision.
 3. Investigate any projection `last_error` without moving the cursor manually;

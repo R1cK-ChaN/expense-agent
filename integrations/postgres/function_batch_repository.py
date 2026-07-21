@@ -44,6 +44,36 @@ class PostgresFunctionBatchRepository:
         )
         self._uuid_factory = uuid_factory or (lambda: str(uuid4()))
 
+    def find_batch(self, request: InboundMessage) -> BatchStart | None:
+        try:
+            with self._connection_factory() as connection:
+                row = connection.execute(
+                    FIND_BATCH_SQL,
+                    {
+                        "platform": request.source_platform,
+                        "platform_user_id": request.source_user_id,
+                        "platform_chat_id": request.source_chat_id,
+                        "provider_dedupe_key": request.source_message_id,
+                    },
+                ).fetchone()
+        except Exception as error:
+            raise TransactionRepositoryError(
+                "Failed to find function batch in PostgreSQL."
+            ) from error
+        if row is None:
+            return None
+        if row["kind"] == "legacy":
+            return BatchStart(
+                batch_id=str(row["id"]),
+                stored_reply=_legacy_transaction_reply(row),
+            )
+        return BatchStart(
+            batch_id=str(row["id"]),
+            stored_reply=None if row.get("reply_text") is None else str(row["reply_text"]),
+            accepted_calls=_decoded_calls(row.get("accepted_calls"), fallback=()),
+            is_new=False,
+        )
+
     def begin_batch(
         self,
         request: InboundMessage,
@@ -133,7 +163,39 @@ class PostgresFunctionBatchRepository:
                 batch_row.get("accepted_calls"),
                 fallback=accepted_calls,
             ),
+            is_new=bool(batch_row.get("is_new", False)),
         )
+
+    def accept_calls(
+        self,
+        batch_id: str,
+        accepted_calls: Sequence[Mapping[str, object]],
+    ) -> None:
+        if not accepted_calls:
+            raise ValueError("accepted function batch must not be empty")
+        try:
+            with self._connection_factory() as connection:
+                row = connection.execute(
+                    ACCEPT_CALLS_SQL,
+                    {
+                        "batch_id": batch_id,
+                        "accepted_calls": json.dumps(
+                            list(accepted_calls),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                ).fetchone()
+                if row is None:
+                    raise TransactionRepositoryError(
+                        "Function batch selection claim was lost."
+                    )
+        except TransactionRepositoryError:
+            raise
+        except Exception as error:
+            raise TransactionRepositoryError(
+                "Failed to accept function batch calls in PostgreSQL."
+            ) from error
 
     def execute_writes(
         self,
@@ -347,23 +409,99 @@ class PostgresPendingRequestRepository:
             ) from error
 BEGIN_BATCH_SQL = """
 -- function_batch_repository.begin_batch
-insert into function_call_batches (
-    id,
-    inbound_message_id,
-    accepted_calls,
-    status,
-    created_at
+with inserted as (
+    insert into function_call_batches (
+        id,
+        inbound_message_id,
+        accepted_calls,
+        status,
+        created_at
+    )
+    values (
+        %(id)s,
+        %(inbound_message_id)s,
+        %(accepted_calls)s::jsonb,
+        case
+            when jsonb_array_length(%(accepted_calls)s::jsonb) = 0
+                then 'selecting'
+            else 'accepted'
+        end,
+        %(created_at)s
+    )
+    on conflict (inbound_message_id) do nothing
+    returning *, true as is_new
+), selected as (
+    select * from inserted
+    union all
+    select b.*, false as is_new
+    from function_call_batches b
+    where b.inbound_message_id = %(inbound_message_id)s
+      and not exists (select 1 from inserted)
 )
-values (
-    %(id)s,
-    %(inbound_message_id)s,
-    %(accepted_calls)s::jsonb,
-    'accepted',
-    %(created_at)s
+select id, status, reply_text, accepted_calls, is_new
+from selected
+limit 1
+"""
+
+
+ACCEPT_CALLS_SQL = """
+-- function_batch_repository.accept_calls
+update function_call_batches
+set accepted_calls = %(accepted_calls)s::jsonb,
+    status = 'accepted'
+where id = %(batch_id)s
+  and status = 'selecting'
+  and jsonb_array_length(accepted_calls) = 0
+returning id
+"""
+
+
+FIND_BATCH_SQL = """
+-- function_batch_repository.find_batch
+with matched_message as (
+    select m.*
+    from inbound_messages m
+    join user_identities ui on ui.id = m.identity_id
+    where m.platform = %(platform)s
+      and ui.platform_user_id = %(platform_user_id)s
+      and m.platform_chat_id = %(platform_chat_id)s
+      and m.provider_dedupe_key = %(provider_dedupe_key)s
+    limit 1
+), result as (
+    select
+        'batch'::text as kind,
+        b.id,
+        b.reply_text,
+        b.accepted_calls,
+        null::date as date,
+        null::numeric as amount,
+        null::text as currency,
+        null::text as category,
+        null::text as merchant,
+        null::text as note,
+        0 as priority
+    from matched_message m
+    join function_call_batches b on b.inbound_message_id = m.id
+    union all
+    select
+        'legacy'::text,
+        m.id,
+        null::text,
+        null::jsonb,
+        t.transaction_date,
+        t.amount,
+        t.currency,
+        t.category,
+        t.merchant,
+        t.note,
+        1
+    from matched_message m
+    join transactions t on t.created_from_message_id = m.id
 )
-on conflict (inbound_message_id)
-do update set inbound_message_id = function_call_batches.inbound_message_id
-returning id, status, reply_text, accepted_calls
+select *
+from result
+order by priority asc
+limit 1
 """
 
 

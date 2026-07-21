@@ -15,7 +15,7 @@ def test_begin_batch_claims_provider_message_and_persists_accepted_calls():
             {"id": "identity-1", "user_id": "user-1"},
             {"id": "message-1"},
             None,
-            {"id": "batch-1", "reply_text": None},
+            {"id": "batch-1", "reply_text": None, "is_new": True},
         ]
     )
     repository = PostgresFunctionBatchRepository(
@@ -30,6 +30,7 @@ def test_begin_batch_claims_provider_message_and_persists_accepted_calls():
 
     assert result.batch_id == "batch-1"
     assert result.stored_reply is None
+    assert result.is_new is True
     assert connection.operations == [
         "postgres_repository.upsert_identity",
         "postgres_repository.insert_inbound_message",
@@ -99,6 +100,22 @@ def test_begin_batch_replays_legacy_transaction_instead_of_creating_batch():
 
     assert result.stored_reply == "已记录：2026-07-21 餐饮 12.50 SGD Toast Box"
     assert "function_batch_repository.begin_batch" not in connection.operations
+
+
+def test_accept_calls_completes_selection_claim_once():
+    connection = ScriptedConnection([{"id": "batch-1"}])
+    repository = PostgresFunctionBatchRepository(
+        connection_factory=lambda: connection,
+        uuid_factory=SequentialIds(),
+    )
+
+    repository.accept_calls(
+        "batch-1",
+        ({"function": "record_expense", "arguments": {"amount": "12.50"}},),
+    )
+
+    assert connection.operations == ["function_batch_repository.accept_calls"]
+    assert connection.commits == 1
 
 
 def test_execute_writes_rolls_back_every_create_when_one_insert_fails():

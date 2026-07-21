@@ -26,7 +26,7 @@ owning documents linked below.
 - Detail: [Domain Model](domain-model.md#parser-result) and
   [Architecture](architecture.md#parser-port).
 
-### Function Selection (Issue #59 Transition)
+### Function Selection
 
 - Input: one current user message plus backend-owned date, timezone, currency,
   and any bounded pending-request context.
@@ -35,9 +35,9 @@ owning documents linked below.
 - Contract: the model runs once, never receives operation results, never accesses
   a repository, and never produces user-visible reply text. Every proposal is
   untrusted until backend validation succeeds.
-- Transition: the provider-neutral catalog and Responses API adapter exist, but
-  production remains on the parser path until the complete batch executor is
-  validated under Issue #59.
+- Runtime: `FUNCTION_BATCHES_ENABLED=true` selects this path only with
+  PostgreSQL. It uses the Responses API and `AGENT_MODEL=gpt-5.5`; the default
+  remains disabled until staging validation and explicit production exposure.
 - Detail: [Domain Model](domain-model.md#canonical-language) and
   [Architecture](architecture.md#function-selection-transition).
 
@@ -52,6 +52,17 @@ owning documents linked below.
 - Detail: [ADR 001](decisions/001-postgresql-ledger-ownership.md),
   [Database Schema](database-schema.md), and
   [Architecture](architecture.md#postgresql-repository).
+
+### Function Batch Repository
+
+- Input: exact provider message identity, one accepted ordered call batch, and
+  validated write commands.
+- Output: persisted batch/reply replay state and committed operation records.
+- Contract: accepted calls are immutable on retry; all write calls are atomic;
+  legacy single-message transactions and new batch transactions both prevent
+  duplicate delivery writes during rollout or rollback.
+- Detail: [ADR 003](decisions/003-deterministic-function-batches.md) and
+  [Database Schema](database-schema.md#function_call_batches-and-function_call_executions).
 
 ### Spending Query Repository
 

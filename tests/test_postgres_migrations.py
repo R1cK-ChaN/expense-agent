@@ -101,7 +101,7 @@ def test_function_batch_migration_adds_delivery_idempotency_and_results():
     assert "accepted_calls jsonb not null" in sql
     assert "reply_text text" in sql
     assert (
-        "status in ('accepted', 'writes_committed', 'completed', 'failed')"
+        "status in ('selecting', 'accepted', 'writes_committed', 'completed', 'failed')"
         in sql
     )
     assert "create table function_call_executions" in sql

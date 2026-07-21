@@ -237,6 +237,11 @@ deterministic operation results, and final reply. A webhook retry with the same
 platform/chat/provider dedupe key therefore returns the stored reply instead of
 selecting or executing functions again.
 
+A new row begins in `selecting` with an empty call array while one request owns
+model selection. The owner atomically replaces it with the non-empty accepted
+batch and moves it to `accepted`; concurrent deliveries remain retryable and do
+not call the model.
+
 `function_call_executions` keys each side-effecting call by
 `(function_batch_id, function_call_index)`. Create calls also use the matching
 unique columns on `transactions`; update calls retain the execution row and

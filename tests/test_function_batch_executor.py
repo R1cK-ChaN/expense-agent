@@ -72,9 +72,7 @@ def test_delivery_retry_returns_stored_reply_without_writing_again():
 
     assert reply == "已记录：原结果"
     assert repository.write_batches == []
-    assert pending.removed == [
-        {"platform": "telegram", "user_id": "42", "chat_id": "100"}
-    ]
+    assert pending.removed == []
 
 
 def test_clarification_persists_structured_pending_request_without_ledger_write():
@@ -249,6 +247,33 @@ def test_missing_date_uses_inbound_received_date_not_processing_date():
     assert repository.write_batches[0][0].record.date == "2026-07-21"
 
 
+def test_relative_statistics_use_inbound_date_on_delayed_processing():
+    repository = FakeBatchRepository()
+    statistics = CapturingStatistics()
+    executor = FunctionBatchExecutor(
+        repository=repository,
+        statistics=statistics,
+        pending_requests=FakePendingService(),
+        timezone="Asia/Singapore",
+        default_currency="SGD",
+        clock=lambda: datetime(2026, 7, 22, 2, 0, tzinfo=timezone.utc),
+        id_factory=SequentialIds(),
+    )
+    proposal = FunctionCallProposal(
+        function=ApplicationFunction.GET_SPENDING_SUMMARY,
+        arguments={
+            "period": {"kind": "today", "start_date": None, "end_date": None},
+            "category": None,
+            "merchant": None,
+        },
+    )
+
+    executor.execute(message(), FunctionCallBatch(calls=(proposal,)))
+
+    assert statistics.date_range.start_date == "2026-07-21"
+    assert statistics.date_range.end_date == "2026-07-21"
+
+
 def test_missing_update_target_returns_deterministic_clarification():
     repository = FakeBatchRepository(missing_update_target=True)
     pending = FakePendingService()
@@ -420,6 +445,12 @@ class FakeStatistics:
         if self.fail:
             raise RuntimeError("read failed")
         return "最近没有支出记录。"
+
+
+class CapturingStatistics:
+    def get_spending_summary(self, **kwargs):
+        self.date_range = kwargs["date_range"]
+        return "done"
 
 
 class SequentialIds:

@@ -40,6 +40,7 @@ class BatchStart:
     batch_id: str
     stored_reply: str | None
     accepted_calls: tuple[Mapping[str, object], ...] = ()
+    is_new: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,11 +59,21 @@ WriteCommand = CreateExpenseCommand | UpdateLatestExpenseCommand
 
 
 class FunctionBatchRepository(Protocol):
+    def find_batch(self, request: InboundMessage) -> BatchStart | None:
+        raise NotImplementedError
+
     def begin_batch(
         self,
         request: InboundMessage,
         accepted_calls: Sequence[Mapping[str, object]],
     ) -> BatchStart:
+        raise NotImplementedError
+
+    def accept_calls(
+        self,
+        batch_id: str,
+        accepted_calls: Sequence[Mapping[str, object]],
+    ) -> None:
         raise NotImplementedError
 
     def execute_writes(
@@ -106,17 +117,23 @@ class FunctionBatchExecutor:
         accepted_calls = tuple(_serialized_call(call) for call in batch.calls)
         start = self._repository.begin_batch(message, accepted_calls)
         if start.stored_reply is not None:
-            self._pending_requests.remove(
-                platform=message.source_platform,
-                user_id=message.source_user_id,
-                chat_id=message.source_chat_id,
-            )
             return start.stored_reply
-        persisted_batch = _deserialized_batch(start.accepted_calls or accepted_calls)
+        persisted_batch = function_batch_from_serialized(
+            start.accepted_calls or accepted_calls
+        )
         validated = self._validate_batch(message, persisted_batch)
 
         if len(validated) == 1 and isinstance(validated[0], _ControlCall):
             reply = self._execute_control(message, validated[0])
+            if (
+                validated[0].function
+                is ApplicationFunction.REJECT_UNSUPPORTED_REQUEST
+            ):
+                self._pending_requests.remove(
+                    platform=message.source_platform,
+                    user_id=message.source_user_id,
+                    chat_id=message.source_chat_id,
+                )
             self._repository.complete_batch(
                 start.batch_id,
                 ({"call_index": 0, "status": "completed"},),
@@ -185,12 +202,12 @@ class FunctionBatchExecutor:
             raise AssertionError("validated function has no executor")
 
         reply = "\n".join(replies)
-        self._repository.complete_batch(start.batch_id, tuple(results), reply)
         self._pending_requests.remove(
             platform=message.source_platform,
             user_id=message.source_user_id,
             chat_id=message.source_chat_id,
         )
+        self._repository.complete_batch(start.batch_id, tuple(results), reply)
         return reply
 
     def _validate_batch(
@@ -226,7 +243,7 @@ class FunctionBatchExecutor:
                 ApplicationFunction.GET_TOP_EXPENSES,
                 ApplicationFunction.LIST_RECENT_EXPENSES,
             }:
-                validated.append(self._validate_read(call_index, call))
+                validated.append(self._validate_read(call_index, call, message))
             elif call.function in {
                 ApplicationFunction.REQUEST_CLARIFICATION,
                 ApplicationFunction.REJECT_UNSUPPORTED_REQUEST,
@@ -242,10 +259,11 @@ class FunctionBatchExecutor:
         self,
         call_index: int,
         call: FunctionCallProposal,
+        message: InboundMessage,
     ) -> "_ReadCall":
         arguments = call.arguments
         filters = _validated_filters(arguments)
-        today = self._clock().astimezone(ZoneInfo(self._timezone)).date()
+        today = message.received_at.astimezone(ZoneInfo(self._timezone)).date()
         if call.function is ApplicationFunction.LIST_RECENT_EXPENSES:
             limit = _validated_limit(arguments.get("limit"))
             return _ReadCall(call_index, call.function, {"filters": filters, "limit": limit})
@@ -487,7 +505,7 @@ def _serialized_call(call: FunctionCallProposal) -> Mapping[str, object]:
     return {"function": call.function.value, "arguments": dict(call.arguments)}
 
 
-def _deserialized_batch(
+def function_batch_from_serialized(
     calls: Sequence[Mapping[str, object]],
 ) -> FunctionCallBatch:
     proposals: list[FunctionCallProposal] = []

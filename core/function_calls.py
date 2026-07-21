@@ -174,6 +174,11 @@ APPLICATION_FUNCTION_TOOLS: tuple[dict[str, object], ...] = (
                     "enum": list(_EXPENSE_FIELDS),
                 },
             },
+            "proposed_function": {
+                "type": "string",
+                "enum": ["record_expense", "update_expense"],
+            },
+            "known_arguments": _closed_object(_EXPENSE_FIELDS),
         },
     ),
     _tool(

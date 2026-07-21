@@ -198,6 +198,8 @@ def test_cloud_run_deploy_script_builds_deploys_and_checks_health():
     assert "--update-secrets" in script
     assert "CLOUD_RUN_SECRET_MAPPINGS" in script
     assert "PARSER_MODEL" in script
+    assert "AGENT_MODEL" in script
+    assert "FUNCTION_BATCHES_ENABLED" in script
     assert "GOOGLE_SHEET_ID" in script
     assert "TELEGRAM_BOT_TOKEN" in script
     assert "WECHAT_TOKEN" in script
@@ -228,6 +230,30 @@ def test_cloud_run_deploy_script_allows_postgres_backend_without_google_settings
 
     assert result.returncode == 0
     assert "::error::" not in result.stdout
+
+
+def test_cloud_run_deploy_explicitly_disables_omitted_function_flag(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    command_log = tmp_path / "gcloud.log"
+    result = run_deploy_script(
+        tmp_path,
+        {
+            "FAKE_GCLOUD_LOG": str(command_log),
+            "CLOUD_RUN_ENV_VARS": (
+                "PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres"
+            ),
+            "CLOUD_RUN_SECRET_MAPPINGS": (
+                "TELEGRAM_BOT_TOKEN=telegram-token:latest,"
+                "TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,"
+                "WECHAT_TOKEN=wechat-token:latest,"
+                "PARSER_API_KEY=parser-api-key:latest,"
+                "DATABASE_URL=database-url:latest"
+            ),
+        },
+    )
+
+    assert result.returncode == 0
+    assert "FUNCTION_BATCHES_ENABLED=false" in command_log.read_text()
 
 
 def test_cloud_run_deploy_attaches_configured_cloud_sql_instance(tmp_path):
@@ -280,6 +306,60 @@ def test_cloud_run_deploy_script_requires_database_url_for_postgres(tmp_path):
         "::error::CLOUD_RUN_SECRET_MAPPINGS must include DATABASE_URL=..."
         in result.stdout
     )
+
+
+def test_cloud_run_deploy_allows_gpt_5_5_function_batches_on_postgres(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    result = run_deploy_script(
+        tmp_path,
+        {
+            "CLOUD_RUN_ENV_VARS": (
+                "FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,"
+                "STORAGE_BACKEND=postgres"
+            ),
+            "CLOUD_RUN_SECRET_MAPPINGS": (
+                "TELEGRAM_BOT_TOKEN=telegram-token:latest,"
+                "TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,"
+                "WECHAT_TOKEN=wechat-token:latest,"
+                "PARSER_API_KEY=parser-api-key:latest,"
+                "DATABASE_URL=database-url:latest"
+            ),
+        },
+    )
+
+    assert result.returncode == 0
+
+
+def test_cloud_run_deploy_rejects_function_batches_on_google_sheets(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    result = run_deploy_script(
+        tmp_path,
+        {
+            "CLOUD_RUN_ENV_VARS": (
+                "FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,"
+                "GOOGLE_SHEET_ID=sheet-id"
+            ),
+        },
+    )
+
+    assert result.returncode == 1
+    assert "requires STORAGE_BACKEND=postgres" in result.stdout
+
+
+def test_cloud_run_deploy_treats_numeric_true_like_runtime(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    result = run_deploy_script(
+        tmp_path,
+        {
+            "CLOUD_RUN_ENV_VARS": (
+                "FUNCTION_BATCHES_ENABLED=1,AGENT_MODEL=gpt-5.5,"
+                "GOOGLE_SHEET_ID=sheet-id"
+            ),
+        },
+    )
+
+    assert result.returncode == 1
+    assert "requires STORAGE_BACKEND=postgres" in result.stdout
 
 
 def test_cloud_run_deploy_script_requires_google_credentials(tmp_path):

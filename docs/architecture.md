@@ -245,15 +245,22 @@ runtime traffic prematurely:
   delivery claims, call-index idempotency, write-batch state, stored replies,
   and the single expiring pending request per chat.
 
-The production handler is still the legacy parser path until the final runtime
-wiring, staging validation, and explicit production exposure decision are
-complete. The new schema is expand-compatible: the legacy
+`app/main.py` now wires this path when `FUNCTION_BATCHES_ENABLED=true`, the
+selected storage backend is PostgreSQL, and required credentials are present.
+The setting defaults to false, so production remains on the legacy parser path
+until staging validation and an explicit production exposure decision. The new
+schema is expand-compatible: the legacy
 `created_from_message_id` uniqueness contract remains intact while new batch
 transactions use a separate batch/call identity.
 
-These modules are not yet the default IM runtime. `docs/now.md` owns the
-transitional state until the validated batch executor, PostgreSQL atomicity,
-pending requests, and runtime wiring are complete.
+Exact delivery replay is checked before model selection. Incomplete deliveries
+resume the persisted accepted calls rather than accepting a second proposal.
+New deliveries first acquire a PostgreSQL `selecting` claim, so concurrent
+webhook copies cannot both call the model. Repository failures remain HTTP
+failures so the provider can retry instead of acknowledging an unpersisted
+reply.
+Semantic logs contain outcome, function names/count, and latency, but not call
+arguments, amounts, message text, or provider/user identifiers.
 
 ### Google Sheets Repository
 
@@ -431,6 +438,9 @@ Required configuration for transaction handling:
 - Telegram webhook secret token.
 - WeChat Official Account token for callback signature verification.
 - Parser provider credentials and model identifier.
+- `FUNCTION_BATCHES_ENABLED`, defaulting to false. When true,
+  `AGENT_MODEL=gpt-5.5` and PostgreSQL are required; `PARSER_MODEL` applies only
+  to the legacy parser path.
 - `STORAGE_BACKEND`, defaulting to `google_sheets` until explicit production cutover.
 - `DATABASE_URL` when `STORAGE_BACKEND=postgres` or when running database tools.
 - For `sync_postgres_to_google_sheets.py` runs, a Google service

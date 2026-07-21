@@ -12,9 +12,9 @@ create table function_call_batches (
         operation_results is null
         or jsonb_typeof(operation_results) = 'array'
     ),
-    check (status in ('accepted', 'writes_committed', 'completed', 'failed')),
+    check (status in ('selecting', 'accepted', 'writes_committed', 'completed', 'failed')),
     check (
-        (status = 'accepted' and completed_at is null)
+        (status in ('selecting', 'accepted') and completed_at is null)
         or (status = 'writes_committed' and completed_at is null)
         or (status in ('completed', 'failed') and completed_at is not null)
     )

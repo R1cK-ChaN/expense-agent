@@ -81,20 +81,37 @@ mapping_value() {
   return 1
 }
 
-require_mapping_keys CLOUD_RUN_ENV_VARS \
-  PARSER_MODEL
-
 require_mapping_keys CLOUD_RUN_SECRET_MAPPINGS \
   TELEGRAM_BOT_TOKEN \
   TELEGRAM_WEBHOOK_SECRET \
   WECHAT_TOKEN \
   PARSER_API_KEY
 
+if ! has_mapping_key "${CLOUD_RUN_ENV_VARS:-}" FUNCTION_BATCHES_ENABLED; then
+  CLOUD_RUN_ENV_VARS="${CLOUD_RUN_ENV_VARS:+${CLOUD_RUN_ENV_VARS},}FUNCTION_BATCHES_ENABLED=false"
+fi
+
 storage_backend="$(
   mapping_value "${CLOUD_RUN_ENV_VARS:-}" STORAGE_BACKEND || true
 )"
 storage_backend="${storage_backend:-google_sheets}"
 storage_backend="${storage_backend,,}"
+
+function_batches_enabled="$(
+  mapping_value "${CLOUD_RUN_ENV_VARS:-}" FUNCTION_BATCHES_ENABLED || true
+)"
+function_batches_enabled="${function_batches_enabled:-false}"
+function_batches_enabled="${function_batches_enabled,,}"
+
+if [[ "${function_batches_enabled}" =~ ^(true|1|yes|on)$ ]]; then
+  require_mapping_keys CLOUD_RUN_ENV_VARS AGENT_MODEL
+  if [[ "${storage_backend}" != "postgres" ]]; then
+    echo "::error::FUNCTION_BATCHES_ENABLED=true requires STORAGE_BACKEND=postgres"
+    exit 1
+  fi
+else
+  require_mapping_keys CLOUD_RUN_ENV_VARS PARSER_MODEL
+fi
 
 case "${storage_backend}" in
   google_sheets)
