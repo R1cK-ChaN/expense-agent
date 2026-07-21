@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from core.statistics import StatisticsQueryScope, StatisticsScopeMode
 from integrations.google_sheets.repository import (
     ALLOWED_UPDATE_FIELDS,
     InvalidTransactionUpdateError,
@@ -282,19 +283,36 @@ class PostgresTransactionRepository:
     def list_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope | None = None,
+        source_platform: str | None = None,
+        user_id: str | None = None,
         start_date: str,
         end_date: str,
     ) -> list[TransactionRecord]:
         _validate_date_range(start_date, end_date)
+        scope = _resolve_statistics_query_scope(
+            scope=scope,
+            source_platform=source_platform,
+            user_id=user_id,
+        )
+        if scope.mode is StatisticsScopeMode.PERSONAL:
+            query = SELECT_TRANSACTIONS_BY_DATE_RANGE_SQL
+            query_scope = {
+                "platform": scope.source_platform,
+                "platform_user_id": scope.source_user_id,
+            }
+        else:
+            query = SELECT_CONVERSATION_TRANSACTIONS_BY_DATE_RANGE_SQL
+            query_scope = {
+                "platform": scope.source_platform,
+                "platform_chat_id": scope.source_chat_id,
+            }
         try:
             with self._connection_factory() as connection:
                 rows = connection.execute(
-                    SELECT_TRANSACTIONS_BY_DATE_RANGE_SQL,
+                    query,
                     {
-                        "platform": str(source_platform),
-                        "platform_user_id": str(user_id),
+                        **query_scope,
                         "start_date": start_date,
                         "end_date": end_date,
                     },
@@ -309,21 +327,31 @@ class PostgresTransactionRepository:
     def list_recent_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         category: str | None,
         merchant: str | None,
         limit: int,
     ) -> list[TransactionRecord]:
         if limit < 1 or limit > 20:
             raise ValueError("recent expense limit must be between 1 and 20")
+        if scope.mode is StatisticsScopeMode.PERSONAL:
+            query = SELECT_RECENT_TRANSACTIONS_SQL
+            query_scope = {
+                "platform": scope.source_platform,
+                "platform_user_id": scope.source_user_id,
+            }
+        else:
+            query = SELECT_RECENT_CONVERSATION_TRANSACTIONS_SQL
+            query_scope = {
+                "platform": scope.source_platform,
+                "platform_chat_id": scope.source_chat_id,
+            }
         try:
             with self._connection_factory() as connection:
                 rows = connection.execute(
-                    SELECT_RECENT_TRANSACTIONS_SQL,
+                    query,
                     {
-                        "platform": str(source_platform),
-                        "platform_user_id": str(user_id),
+                        **query_scope,
                         "category": category,
                         "merchant": merchant,
                         "limit": limit,
@@ -833,6 +861,33 @@ order by t.transaction_date asc, t.created_at asc, t.id asc
 """
 
 
+SELECT_CONVERSATION_TRANSACTIONS_BY_DATE_RANGE_SQL = f"""
+-- postgres_repository.select_conversation_transactions_by_date_range
+select
+{RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK}
+from transactions t
+left join inbound_messages m on m.id = t.created_from_message_id
+left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
+left join lateral (
+    select *
+    from user_identities
+    where user_id = t.user_id
+    order by created_at asc, id asc
+    limit 1
+) fallback_ui on true
+where coalesce(m.platform, batch_m.platform) = %(platform)s
+  and coalesce(m.platform_chat_id, batch_m.platform_chat_id)
+      = %(platform_chat_id)s
+  and t.transaction_type = 'expense'
+  and t.transaction_date >= %(start_date)s
+  and t.transaction_date <= %(end_date)s
+order by t.transaction_date asc, t.created_at asc, t.id asc
+"""
+
+
 SELECT_RECENT_TRANSACTIONS_SQL = f"""
 -- postgres_repository.select_recent_transactions
 select
@@ -847,6 +902,38 @@ left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 join user_identities fallback_ui on fallback_ui.id = request_ui.id
 where request_ui.platform = %(platform)s
   and request_ui.platform_user_id = %(platform_user_id)s
+  and t.transaction_type = 'expense'
+  and (%(category)s::text is null or t.category = %(category)s)
+  and (
+      %(merchant)s::text is null
+      or lower(coalesce(t.merchant, '')) like
+          '%%' || lower(%(merchant)s) || '%%'
+  )
+order by t.transaction_date desc, t.created_at desc, t.id desc
+limit %(limit)s
+"""
+
+
+SELECT_RECENT_CONVERSATION_TRANSACTIONS_SQL = f"""
+-- postgres_repository.select_recent_conversation_transactions
+select
+{RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK}
+from transactions t
+left join inbound_messages m on m.id = t.created_from_message_id
+left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
+left join lateral (
+    select *
+    from user_identities
+    where user_id = t.user_id
+    order by created_at asc, id asc
+    limit 1
+) fallback_ui on true
+where coalesce(m.platform, batch_m.platform) = %(platform)s
+  and coalesce(m.platform_chat_id, batch_m.platform_chat_id)
+      = %(platform_chat_id)s
   and t.transaction_type = 'expense'
   and (%(category)s::text is null or t.category = %(category)s)
   and (
@@ -1018,6 +1105,26 @@ def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=ZoneInfo(timezone_name))
     return timestamp.astimezone(ZoneInfo(timezone_name)).isoformat()
+
+
+def _resolve_statistics_query_scope(
+    *,
+    scope: StatisticsQueryScope | None,
+    source_platform: str | None,
+    user_id: str | None,
+) -> StatisticsQueryScope:
+    if scope is not None:
+        if source_platform is not None or user_id is not None:
+            raise ValueError("statistics scope cannot be combined with legacy identity")
+        return scope
+    if not source_platform or not user_id:
+        raise ValueError("statistics query requires scope or legacy identity")
+    return StatisticsQueryScope(
+        mode=StatisticsScopeMode.PERSONAL,
+        source_platform=source_platform,
+        source_user_id=user_id,
+        source_chat_id="",
+    )
 
 
 def _validate_month(month: str) -> None:

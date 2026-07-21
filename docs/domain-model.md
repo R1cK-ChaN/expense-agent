@@ -116,6 +116,8 @@ Required fields:
 - `source_message_id`: provider message identifier within the conversation.
 - `source_chat_id`: provider conversation or official-account identifier used for replies and duplicate detection.
 - `source_user_id`: provider sender identifier.
+- `conversation_kind`: normalized `personal` or `group` conversation kind used
+  by deterministic read-scope policy.
 - `message_text`: raw user-visible message text.
 - `message_timestamp`: provider message timestamp converted to an ISO 8601 datetime.
 
@@ -129,6 +131,8 @@ Optional fields:
 Invariants:
 
 - `source_platform`, `source_message_id`, `source_chat_id`, and `source_user_id` must be preserved exactly after provider-specific normalization.
+- Telegram `private` maps to `personal`; `group` and `supergroup` map to
+  `group`. WeChat Official Account messages map to `personal`.
 - Telegram private `message_text` is handed to the parser unchanged.
 - Group and supergroup `message_text` is handed to the parser only after the explicit bot mention is stripped by the Telegram adapter.
 - WeChat Official Account text XML `Content` is handed to the parser unchanged after XML decoding.
@@ -246,6 +250,8 @@ Fields:
 - `changes`: validated transaction fields to update.
 - `requested_by_user_id`: source user requesting the update.
 - `requested_at`: backend timestamp.
+- `scope`: a backend-owned personal or conversation query boundary containing
+  source platform, requester identity, and source chat identity.
 
 Supported update fields for the update-recent MVP:
 
@@ -310,7 +316,15 @@ Invariants:
 
 - Query requests must not append, update, or delete transaction rows.
 - Query date ranges must be bounded before storage access.
-- Query results must be scoped to the requesting user or chat policy defined by the implementation issue.
+- Private-conversation queries are personal by default.
+- Group-conversation queries include all transactions whose originating message
+  belongs to the same source platform and source chat.
+- A group query becomes personal only when the function proposal explicitly
+  carries `personal`, which the selector may propose only for explicit user
+  wording such as “我个人” or “我自己的”.
+- Conversation queries must constrain both platform and chat identity and must
+  recognize legacy and function-batch transaction origins.
+- Write ownership and latest-expense updates remain personal even in groups.
 - Total queries return the configured default-currency total for the requested
   inclusive date range; legacy current-month queries end on the request date.
 - Non-default-currency expenses are converted with transaction-date daily reference rates for reporting only.

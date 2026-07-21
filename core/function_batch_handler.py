@@ -74,6 +74,7 @@ class FunctionBatchHandler:
                         ).date(),
                         timezone=self._timezone,
                         default_currency=self._default_currency,
+                        conversation_kind=message.conversation_kind,
                         pending_request=(
                             None
                             if pending is None

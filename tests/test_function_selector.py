@@ -7,6 +7,7 @@ from core.function_calls import (
     FunctionCallProposal,
 )
 from core.function_selector import FunctionSelectionContext, FunctionSelector
+from core.messages import ConversationKind
 
 
 def test_function_catalog_exposes_only_approved_strict_functions():
@@ -45,6 +46,7 @@ def test_function_selector_supplies_runtime_context_and_complete_catalog():
             today=date(2026, 7, 21),
             timezone="Asia/Singapore",
             default_currency="SGD",
+            conversation_kind=ConversationKind.GROUP,
         ),
     )
 
@@ -56,7 +58,25 @@ def test_function_selector_supplies_runtime_context_and_complete_catalog():
     assert "TODAY: 2026-07-21" in call["user_prompt"]
     assert "TIMEZONE: Asia/Singapore" in call["user_prompt"]
     assert "DEFAULT_CURRENCY: SGD" in call["user_prompt"]
+    assert "CONVERSATION_KIND: group" in call["user_prompt"]
+    assert "personal scope only when the user explicitly" in call["system_prompt"]
     assert "这个月花了多少？" in call["user_prompt"]
+
+
+def test_statistics_tools_accept_only_nullable_explicit_personal_scope():
+    statistics_names = {
+        ApplicationFunction.GET_SPENDING_SUMMARY.value,
+        ApplicationFunction.COMPARE_SPENDING_PERIODS.value,
+        ApplicationFunction.GET_TOP_EXPENSES.value,
+        ApplicationFunction.LIST_RECENT_EXPENSES.value,
+    }
+
+    for tool in APPLICATION_FUNCTION_TOOLS:
+        if tool["name"] not in statistics_names:
+            continue
+        scope = tool["parameters"]["properties"]["scope"]
+        assert scope["type"] == ["string", "null"]
+        assert scope["enum"] == ["personal", None]
 
 
 def _assert_closed_object_schemas(schema: object) -> None:

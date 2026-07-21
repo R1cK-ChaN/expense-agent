@@ -9,7 +9,7 @@ from core.function_calls import (
     FunctionCallBatch,
     FunctionCallProposal,
 )
-from core.messages import InboundMessage
+from core.messages import ConversationKind, InboundMessage
 from core.pending_requests import PendingRequest
 from integrations.google_sheets.repository import TransactionRepositoryError
 
@@ -72,6 +72,7 @@ def test_new_delivery_passes_bounded_pending_context_to_selector():
 
     context = selector.calls[0][1]
     assert context.today.isoformat() == "2026-07-21"
+    assert context.conversation_kind is ConversationKind.GROUP
     assert context.pending_request["known_arguments"] == {"merchant": "Toast Box"}
     assert repository.accepted[0][0] == "batch-new"
 
@@ -129,6 +130,7 @@ def message():
         source_message_id="9001",
         message_text="test",
         received_at=datetime(2026, 7, 21, 2, 0, tzinfo=timezone.utc),
+        conversation_kind=ConversationKind.GROUP,
     )
 
 

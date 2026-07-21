@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from typing import Protocol
 
 from core.currencies import normalize_currency_code
@@ -19,8 +20,7 @@ class StatisticsRepository(Protocol):
     def list_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: "StatisticsQueryScope",
         start_date: str,
         end_date: str,
     ) -> list[TransactionRecord]:
@@ -29,8 +29,7 @@ class StatisticsRepository(Protocol):
     def list_recent_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: "StatisticsQueryScope",
         category: str | None,
         merchant: str | None,
         limit: int,
@@ -48,6 +47,25 @@ class DateRange:
 class StatisticsFilters:
     category: str | None = None
     merchant: str | None = None
+
+
+class StatisticsScopeMode(StrEnum):
+    PERSONAL = "personal"
+    CONVERSATION = "conversation"
+
+
+@dataclass(frozen=True)
+class StatisticsQueryScope:
+    mode: StatisticsScopeMode
+    source_platform: str
+    source_user_id: str
+    source_chat_id: str
+
+    def __post_init__(self) -> None:
+        if not self.source_platform or not self.source_user_id:
+            raise ValueError("statistics scope requires platform and user identity")
+        if self.mode is StatisticsScopeMode.CONVERSATION and not self.source_chat_id:
+            raise ValueError("conversation statistics scope requires a chat identity")
 
 
 @dataclass(frozen=True)
@@ -106,15 +124,13 @@ class StatisticsService:
     def get_spending_summary(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         date_range: DateRange,
         filters: StatisticsFilters = StatisticsFilters(),
     ) -> SpendingSummary:
         _validate_range(date_range)
         records = self._repository.list_expenses(
-            source_platform=source_platform,
-            user_id=user_id,
+            scope=scope,
             start_date=date_range.start_date,
             end_date=date_range.end_date,
         )
@@ -128,21 +144,18 @@ class StatisticsService:
     def compare_spending_periods(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         current_range: DateRange,
         comparison_range: DateRange,
         filters: StatisticsFilters = StatisticsFilters(),
     ) -> SpendingComparison:
         current = self.get_spending_summary(
-            source_platform=source_platform,
-            user_id=user_id,
+            scope=scope,
             date_range=current_range,
             filters=filters,
         )
         comparison = self.get_spending_summary(
-            source_platform=source_platform,
-            user_id=user_id,
+            scope=scope,
             date_range=comparison_range,
             filters=filters,
         )
@@ -164,8 +177,7 @@ class StatisticsService:
     def get_top_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         date_range: DateRange,
         limit: int,
         filters: StatisticsFilters = StatisticsFilters(),
@@ -173,8 +185,7 @@ class StatisticsService:
         _validate_limit(limit)
         _validate_range(date_range)
         records = self._repository.list_expenses(
-            source_platform=source_platform,
-            user_id=user_id,
+            scope=scope,
             start_date=date_range.start_date,
             end_date=date_range.end_date,
         )
@@ -191,15 +202,13 @@ class StatisticsService:
     def list_recent_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         limit: int,
         filters: StatisticsFilters = StatisticsFilters(),
     ) -> RecentExpenses:
         _validate_limit(limit)
         records = self._repository.list_recent_expenses(
-            source_platform=source_platform,
-            user_id=user_id,
+            scope=scope,
             category=filters.category,
             merchant=filters.merchant,
             limit=limit,

@@ -14,7 +14,8 @@ from core.function_calls import (
     FunctionCallBatch,
     FunctionCallProposal,
 )
-from core.messages import InboundMessage
+from core.messages import ConversationKind, InboundMessage
+from core.statistics import StatisticsScopeMode
 from integrations.google_sheets.repository import TransactionRecord
 
 
@@ -274,6 +275,48 @@ def test_relative_statistics_use_inbound_date_on_delayed_processing():
     assert statistics.date_range.end_date == "2026-07-21"
 
 
+@pytest.mark.parametrize(
+    ("conversation_kind", "proposed_scope", "expected_mode"),
+    [
+        (ConversationKind.PERSONAL, None, StatisticsScopeMode.PERSONAL),
+        (ConversationKind.GROUP, None, StatisticsScopeMode.CONVERSATION),
+        (ConversationKind.GROUP, "personal", StatisticsScopeMode.PERSONAL),
+    ],
+)
+def test_statistics_scope_is_resolved_deterministically(
+    conversation_kind,
+    proposed_scope,
+    expected_mode,
+):
+    statistics = CapturingStatistics()
+    executor = make_executor(FakeBatchRepository(), statistics=statistics)
+    executor.execute(
+        message(conversation_kind=conversation_kind),
+        FunctionCallBatch(
+            calls=(
+                FunctionCallProposal(
+                    function=ApplicationFunction.GET_SPENDING_SUMMARY,
+                    arguments={
+                        "period": {
+                            "kind": "this_month",
+                            "start_date": None,
+                            "end_date": None,
+                        },
+                        "category": None,
+                        "merchant": None,
+                        "scope": proposed_scope,
+                    },
+                ),
+            )
+        ),
+    )
+
+    assert statistics.scope.mode is expected_mode
+    assert statistics.scope.source_platform == "telegram"
+    assert statistics.scope.source_user_id == "42"
+    assert statistics.scope.source_chat_id == "100"
+
+
 def test_missing_update_target_returns_deterministic_clarification():
     repository = FakeBatchRepository(missing_update_target=True)
     pending = FakePendingService()
@@ -324,7 +367,10 @@ def record_expense(
     )
 
 
-def message() -> InboundMessage:
+def message(
+    *,
+    conversation_kind: ConversationKind = ConversationKind.PERSONAL,
+) -> InboundMessage:
     return InboundMessage(
         source_platform="telegram",
         source_user_id="42",
@@ -334,6 +380,7 @@ def message() -> InboundMessage:
         received_at=datetime(2026, 7, 21, 2, 0, tzinfo=timezone.utc),
         source_username="ada",
         source_user_display_name="Ada",
+        conversation_kind=conversation_kind,
     )
 
 
@@ -450,6 +497,7 @@ class FakeStatistics:
 class CapturingStatistics:
     def get_spending_summary(self, **kwargs):
         self.date_range = kwargs["date_range"]
+        self.scope = kwargs["scope"]
         return "done"
 
 
