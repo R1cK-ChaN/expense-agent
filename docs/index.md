@@ -23,6 +23,8 @@ Each kind of fact has one owner:
 | Operational migration | [PostgreSQL Cutover](postgres-backfill-cutover.md) | Backfill, verification, cutover, and rollback procedure. |
 | Google workbook contract | [Google Sheets Template](google-sheets-template.md) | Rollback and projection worksheet schemas. |
 | Telegram ingress operation | [Telegram Webhook](telegram-webhook.md) | Route configuration and smoke checks. |
+| Operator procedures | [Runbooks](runbooks/README.md) | Safe operational actions, expected results, failure handling, and rollback. |
+| Durable supporting material | [References](references/README.md) | Curated external references and supporting project context. |
 
 ## Fact Precedence
 
