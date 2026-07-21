@@ -44,7 +44,7 @@ Run the repo verification command and any manual checks named in the issue.
 For this documentation baseline, the verification command is:
 
 ```sh
-bash -lc 'status=0; for f in docs/requirements.md docs/domain-model.md docs/architecture.md docs/testing-strategy.md; do if ! test -s "$f"; then printf "%s missing or empty\n" "$f"; status=1; fi; done; exit "$status"'
+bash -lc 'status=0; for f in docs/index.md docs/now.md docs/requirements.md docs/domain-model.md docs/interfaces.md docs/architecture.md docs/decisions/README.md docs/testing-strategy.md; do if ! test -s "$f"; then printf "%s missing or empty\n" "$f"; status=1; fi; done; exit "$status"'
 ```
 
 Future code issues should replace or extend this with the project test command once the test runner exists.
@@ -113,10 +113,18 @@ Documentation issues should include a lightweight check that fails when required
 
 Manual review checklist for this baseline:
 
+- `docs/index.md` assigns a single owner to every major fact category and
+  defines precedence when artifacts disagree.
+- `docs/now.md` records current work, blockers, decisions, validation, and safe
+  next actions without becoming a changelog.
 - `docs/requirements.md` identifies supported user stories, out-of-scope features, defaults, categories, acceptance cases, and future MVP issue breakdown.
 - `docs/domain-model.md` defines transaction fields, Telegram metadata, parser results, update requests, query requests, supported categories, storage row shape, and validation invariants.
-- `docs/architecture.md` states Telegram is the interface, backend services own orchestration, the LLM is parser-only, and Google Sheets is storage.
+- `docs/interfaces.md` records human-readable cross-boundary contracts and
+  links to their detailed owners.
+- `docs/architecture.md` states the IM adapters are interfaces, backend services own orchestration, the LLM is parser-only, PostgreSQL is authoritative, and Google Sheets is a projection.
+- `docs/decisions/` preserves durable decisions as append-only ADR history.
 - `docs/testing-strategy.md` explains Red, Green, Refactor, Verify, expected test types, and the current docs verification command.
+- Repository-local Markdown links resolve to existing files.
 
 ## Issue-to-Test Mapping
 

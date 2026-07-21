@@ -1,0 +1,50 @@
+name: Deploy Sheet Projection Schedule
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment that owns the projection job and schedule
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy projection job and schedule
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+      SHEET_PROJECTION_JOB: ${{ vars.SHEET_PROJECTION_JOB }}
+      SHEET_PROJECTION_IMAGE_URI: ${{ vars.SHEET_PROJECTION_IMAGE_URI }}
+      BOT_RUNTIME_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
+      SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT: ${{ vars.SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT }}
+      SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT }}
+      SHEET_PROJECTION_SECRET_MAPPINGS: ${{ vars.SHEET_PROJECTION_SECRET_MAPPINGS }}
+      SHEET_PROJECTION_SCHEDULE: ${{ vars.SHEET_PROJECTION_SCHEDULE }}
+      SHEET_PROJECTION_SCHEDULE_TIMEZONE: ${{ vars.SHEET_PROJECTION_SCHEDULE_TIMEZONE }}
+      DEFAULT_TIMEZONE: ${{ vars.DEFAULT_TIMEZONE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy projection job and scheduler
+        run: bash scripts/deploy_sheet_projection_job.sh

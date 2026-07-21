@@ -2,8 +2,9 @@
 
 ## Purpose
 
-This document describes a pragmatic PostgreSQL storage model for moving Expense
-Agent beyond Google Sheets as the primary system of record.
+This document describes the PostgreSQL authoritative ledger schema used by
+runtime traffic after cutover and by migration, verification, and projection
+tooling.
 
 The goal is to support:
 
@@ -14,9 +15,9 @@ The goal is to support:
 - WeChat text, voice, location, and event message routing.
 - Bounded historical context for reporting and LLM-assisted analysis.
 
-The database owns durable state. The backend owns business rules. The LLM
-parses user intent and may summarize bounded backend-selected context, but it
-must not query the database directly or decide persistence.
+PostgreSQL owns committed relational transaction state and audit evidence. The
+backend owns business rules. The LLM must not query the database directly or
+decide persistence.
 
 ## Design Principles
 
@@ -278,7 +279,7 @@ create index idx_google_sheet_exports_enabled
     where enabled = true;
 ```
 
-These indexes cover the current product paths:
+These indexes cover the authoritative repository contracts:
 
 - Duplicate webhook delivery lookup.
 - Latest expense lookup for `update_recent_expense`.
@@ -289,8 +290,8 @@ These indexes cover the current product paths:
 
 ## Repository Mapping
 
-The existing application service already depends on a repository boundary. A
-PostgreSQL repository should implement the same core behaviors first:
+The PostgreSQL repository implements these behaviors for runtime traffic,
+migration commands, and contract verification:
 
 - `find_by_source_message`: read `inbound_messages` by unique provider tuple and
   join to any created transaction. For providers without stable message IDs,
@@ -310,13 +311,14 @@ PostgreSQL repository should implement the same core behaviors first:
   `transaction_events` row in one database transaction.
 - `list_monthly_expenses`: query `transactions` by `user_id` and date range.
 
-For the current codebase, the first implementation can keep the domain-facing
-`TransactionRecord` shape and hide these joins inside the repository.
+The implementation keeps the domain-facing `TransactionRecord` shape and hides
+these joins inside the repository. `app/main.py` wires it when
+`STORAGE_BACKEND=postgres`.
 
 ## LLM Context Boundary
 
-PostgreSQL enables better historical features, but the LLM should receive only
-bounded, backend-selected context.
+Any future feature that uses PostgreSQL-derived historical context must pass
+only bounded, backend-selected context to the LLM.
 
 Allowed examples:
 
@@ -338,7 +340,7 @@ Not allowed:
 The backend should translate user intent into safe repository queries, then pass
 only the minimal result set needed for response wording or classification.
 
-## Migration From Google Sheets
+## Offline Import From Google Sheets
 
 Suggested migration path:
 
@@ -351,9 +353,10 @@ Suggested migration path:
    provider message metadata is unavailable.
 5. Verify row counts, monthly totals, currencies, categories, merchants, and
    latest-transaction behavior.
-6. Switch production writes to PostgreSQL.
-7. Keep Google Sheets as a read-only source/export target if spreadsheet
-   visibility is still useful.
+6. Keep production runtime on its current backend until verification succeeds
+   and cutover is explicitly approved.
+7. Set `STORAGE_BACKEND=postgres` only for the approved environment; importing
+   rows alone does not change ledger ownership.
 
 ## Deliberately Out Of Scope For V1
 
@@ -365,6 +368,6 @@ Suggested migration path:
 - Event sourcing as the only source of truth.
 - Hard deletion of financial records.
 
-These can be added later if product requirements justify them. The v1 database
-should solve durable user identity, idempotency, current transaction state, and
-basic audit history first.
+These can be added later if product requirements justify them. The current
+schema supports authoritative identity, idempotency, transaction state, and
+audit verification.

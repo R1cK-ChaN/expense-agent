@@ -119,6 +119,8 @@ def _parser_configured(settings: Settings) -> bool:
 def _build_transaction_repository(
     settings: Settings,
 ) -> GoogleSheetsTransactionRepository | PostgresTransactionRepository | None:
+    """Build the selected authoritative ledger for bot reads and writes."""
+
     if settings.storage_backend == STORAGE_BACKEND_GOOGLE_SHEETS:
         if not settings.google_service_account_json or not settings.google_sheet_id:
             return None
@@ -139,6 +141,8 @@ def _build_transaction_repository(
             timezone=settings.default_timezone,
         )
 
+    # Unsupported values disable transaction handling while preserving health.
+    # Deployment validation rejects unsupported production configuration.
     return None
 
 

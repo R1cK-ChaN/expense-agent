@@ -30,8 +30,8 @@ Configure these as repository variables or production environment variables:
 | `CLOUD_RUN_REGION` | Cloud Run and Artifact Registry region, for example `asia-southeast1`. |
 | `CLOUD_RUN_SERVICE` | Cloud Run service name, for example `expense-agent`. |
 | `ARTIFACT_REGISTRY_REPOSITORY` | Docker Artifact Registry repository name. |
-| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL` and the selected backend's non-secret settings. Set `STORAGE_BACKEND` explicitly for cutover or rollback; omitted values default to `google_sheets`. |
-| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include all required runtime secret environment variables for parser, IM providers, and the selected storage backend. |
+| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL`; use `STORAGE_BACKEND=postgres` in staging and only after approved production cutover. |
+| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include parser and IM-provider secrets plus `DATABASE_URL` for PostgreSQL or `GOOGLE_SERVICE_ACCOUNT_JSON` for the rollback backend. |
 
 Optional variables:
 
@@ -43,19 +43,18 @@ Optional variables:
 Example non-secret config:
 
 ```text
-SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=google_sheets,GOOGLE_SHEET_ID=<sheet-id>,GOOGLE_WORKSHEET_NAME=Transactions
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres
 ```
 
 Example Secret Manager mappings:
 
 ```text
-TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest
+TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,DATABASE_URL=database-url:latest
 ```
 
-For PostgreSQL storage, set `STORAGE_BACKEND=postgres`, provide `DATABASE_URL`
-through `CLOUD_RUN_SECRET_MAPPINGS`, and keep the Google Sheets settings
-available if production needs to roll back by changing `STORAGE_BACKEND` back to
-`google_sheets`.
+The deployment script validates credentials for the selected backend.
+Production must retain its current setting until backfill verification and the
+staging smoke path succeed; a successful deploy does not authorize cutover.
 
 ## GCP Setup
 
@@ -72,6 +71,34 @@ Grant the deploy service account the minimum roles needed to submit builds,
 write images, deploy Cloud Run revisions, and act as the runtime service
 account. Grant the GitHub Workload Identity principal access to impersonate the
 deploy service account.
+
+## Sheet Projection Schedule
+
+The `Deploy Sheet Projection Schedule` workflow is manual and scoped to the
+selected GitHub `staging` or `production` environment. It calls
+`scripts/deploy_sheet_projection_job.sh`, which idempotently deploys a Cloud Run
+Job running `sync_postgres_to_google_sheets.py` and creates or updates its Cloud
+Scheduler HTTP trigger. It is intentionally separate from the bot deployment so
+merging code does not enable production projection or production cutover.
+
+Configure these variables in each GitHub environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `SHEET_PROJECTION_JOB` | Stable Cloud Run Job name. |
+| `SHEET_PROJECTION_IMAGE_URI` | Already-built Expense Agent image containing `scripts/`. |
+| `CLOUD_RUN_SERVICE_ACCOUNT` | Existing bot runtime identity, used to reject credential reuse by the projection job. |
+| `SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT` | Dedicated job identity with access only to projection secrets and required APIs. |
+| `SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT` | Separate identity permitted to invoke only the projection job. |
+| `SHEET_PROJECTION_SECRET_MAPPINGS` | Must map `DATABASE_URL` and `GOOGLE_SERVICE_ACCOUNT_JSON` from environment-specific Secret Manager secrets. |
+| `SHEET_PROJECTION_SCHEDULE` | Cron schedule; defaults to every five minutes. |
+| `SHEET_PROJECTION_SCHEDULE_TIMEZONE` | Scheduler timezone; defaults to `Etc/UTC`. |
+
+The deployment script enforces pairwise separation among the bot runtime,
+projection job, and scheduler invocation identities. IAM grants remain
+environment-owned prerequisites; the script does not
+broaden IAM. Re-running the workflow updates the named job and schedule rather
+than creating duplicates.
 
 ## Verification
 

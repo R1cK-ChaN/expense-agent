@@ -1,4 +1,5 @@
 import logging
+from calendar import monthrange
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -9,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 from core.currencies import normalize_currency_code
 from core.exchange_rates import (
-    ExchangeRateConversion,
     ExchangeRateProvider,
     ExchangeRateProviderError,
 )
@@ -98,12 +98,30 @@ class TransactionRepository(Protocol):
     ) -> list[TransactionRecord]:
         raise NotImplementedError
 
+    def list_expenses(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[TransactionRecord]:
+        raise NotImplementedError
+
 
 @dataclass(frozen=True)
-class _MonthlyTotalSummary:
+class _ExpenseTotalSummary:
     total: Decimal
     currency: str
-    conversions: tuple[ExchangeRateConversion, ...]
+    foreign_totals: tuple[tuple[str, Decimal], ...]
+    exchange_rate_dates: tuple[tuple[str, str], ...]
+    category_totals: tuple[tuple[str, Decimal], ...]
+
+
+@dataclass(frozen=True)
+class _ExpenseQueryBounds:
+    start_date: str
+    end_date: str
 
 
 class CreateExpenseValidator(Protocol):
@@ -168,7 +186,7 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
 
         if existing_record is not None:
-            return _format_confirmation(existing_record)
+            return self._format_record_reply("已记录", existing_record)
 
         try:
             parser_result = self._parser.parse(
@@ -233,7 +251,7 @@ class TransactionService:
             logger.exception("Failed to append transaction.")
             return PROCESSING_FAILURE_MESSAGE
 
-        return _format_confirmation(saved_record)
+        return self._format_record_reply("已记录", saved_record)
 
     def handle_telegram_message(self, message: InboundMessage) -> str:
         return self.handle_message(message)
@@ -289,7 +307,7 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
 
         self._update_targets_by_message[update_message_key] = updated_record.id
-        return _format_update_confirmation(updated_record)
+        return self._format_record_reply("已更新", updated_record)
 
     def _handle_recent_create_retry(
         self,
@@ -313,7 +331,7 @@ class TransactionService:
             except TransactionRepositoryError:
                 logger.exception("Failed to update duplicate transaction retry.")
                 return PROCESSING_FAILURE_MESSAGE
-            return _format_update_confirmation(updated_record)
+            return self._format_record_reply("已更新", updated_record)
 
         try:
             latest_record = self._repository.get_latest_transaction(
@@ -349,7 +367,7 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
 
         self._update_targets_by_message[retry_message_key] = updated_record.id
-        return _format_update_confirmation(updated_record)
+        return self._format_record_reply("已更新", updated_record)
 
     def _handle_query_monthly_total(
         self,
@@ -365,7 +383,6 @@ class TransactionService:
             logger.error("Monthly total query intent missing query fields.")
             return PROCESSING_FAILURE_MESSAGE
 
-        current_month = _message_month(message.received_at, self._timezone)
         currency = normalize_currency_code(self._default_currency)
         query_currency = normalize_currency_code(
             query.currency,
@@ -375,21 +392,31 @@ class TransactionService:
             return PROCESSING_FAILURE_MESSAGE
         if query_currency is None:
             return _format_unsupported_monthly_total_reply(currency)
-        if query.month != current_month or query_currency != currency:
+        if query_currency != currency:
             return _format_unsupported_monthly_total_reply(currency)
 
         try:
-            records = self._repository.list_monthly_expenses(
-                source_platform=message.source_platform,
-                user_id=message.source_user_id,
-                month=current_month,
+            bounds = _query_bounds(
+                query,
+                current_date=_message_date(message.received_at, self._timezone),
             )
-        except TransactionRepositoryError:
-            logger.exception("Failed to list monthly expenses.")
+        except ValueError:
+            logger.exception("Invalid expense query date range.")
             return PROCESSING_FAILURE_MESSAGE
 
         try:
-            summary = _summarize_monthly_records(
+            records = self._repository.list_expenses(
+                source_platform=message.source_platform,
+                user_id=message.source_user_id,
+                start_date=bounds.start_date,
+                end_date=bounds.end_date,
+            )
+        except TransactionRepositoryError:
+            logger.exception("Failed to list expenses by date range.")
+            return PROCESSING_FAILURE_MESSAGE
+
+        try:
+            summary = _summarize_expense_records(
                 records,
                 currency=currency,
                 exchange_rate_provider=self._exchange_rate_provider,
@@ -398,7 +425,40 @@ class TransactionService:
             logger.exception("Failed to convert monthly expenses.")
             return EXCHANGE_RATE_FAILURE_MESSAGE
 
-        return _format_monthly_total_reply(summary)
+        return _format_expense_total_reply(summary, bounds=bounds)
+
+    def _format_record_reply(
+        self,
+        prefix: str,
+        record: TransactionRecord,
+    ) -> str:
+        summary = _format_record_summary(record)
+        local_currency = normalize_currency_code(self._default_currency)
+        record_currency = normalize_currency_code(record.currency)
+        if (
+            local_currency is None
+            or record_currency is None
+            or record_currency == local_currency
+        ):
+            return f"{prefix}：{summary}"
+
+        if self._exchange_rate_provider is None:
+            return f"{prefix}：{summary}"
+        try:
+            conversion = self._exchange_rate_provider.convert(
+                record.amount,
+                from_currency=record_currency,
+                to_currency=local_currency,
+                date=record.date,
+            )
+        except Exception:
+            logger.exception("Failed to convert recorded foreign-currency expense.")
+            return f"{prefix}：{summary}"
+
+        return (
+            f"{prefix}：{summary}（折合 {_format_money(conversion.converted_amount)} "
+            f"{local_currency}，汇率日 {conversion.rate_date}）"
+        )
 
     def _new_transaction_record(
         self,
@@ -428,39 +488,53 @@ class TransactionService:
         )
 
 
-def _format_confirmation(record: TransactionRecord) -> str:
-    return "已记录：" + _format_record_summary(record)
-
-
-def _format_update_confirmation(record: TransactionRecord) -> str:
-    return "已更新：" + _format_record_summary(record)
-
-
 def _format_similar_recent_expense_reply(record: TransactionRecord) -> str:
     return SIMILAR_RECENT_EXPENSE_MESSAGE + "：" + _format_record_summary(record)
 
 
-def _format_monthly_total_reply(summary: _MonthlyTotalSummary) -> str:
+def _format_expense_total_reply(
+    summary: _ExpenseTotalSummary,
+    *,
+    bounds: _ExpenseQueryBounds,
+) -> str:
     amount = _format_money(summary.total)
-    reply = f"本月支出合计：{amount} {summary.currency}"
-    if not summary.conversions:
-        return reply
+    if bounds.start_date == bounds.end_date:
+        period = bounds.start_date
+    else:
+        period = f"{bounds.start_date} 至 {bounds.end_date}"
+    lines = [f"{period} 支出合计：{amount} {summary.currency}"]
 
-    conversion_parts = [
-        (
-            f"{format(conversion.original_amount, 'f')} "
-            f"{conversion.original_currency} -> "
-            f"{_format_money(conversion.converted_amount)} "
-            f"{conversion.converted_currency} "
-            f"(汇率日 {conversion.rate_date})"
+    if summary.foreign_totals:
+        foreign_parts = [
+            f"{_format_original_money(value)} {code}"
+            for code, value in summary.foreign_totals
+        ]
+        lines.append(
+            f"外币支出（{len(summary.foreign_totals)} 种）：" + "；".join(foreign_parts)
         )
-        for conversion in summary.conversions
-    ]
-    return reply + "\n其中换算：" + "; ".join(conversion_parts)
+        rate_date_parts = [
+            f"{code} {rate_date}"
+            for code, rate_date in summary.exchange_rate_dates
+        ]
+        lines.append("汇率日：" + "；".join(rate_date_parts))
+
+    if summary.category_totals:
+        lines.append("分类占比：")
+        for category, category_total in summary.category_totals:
+            percentage = (
+                Decimal("0")
+                if summary.total == 0
+                else category_total / summary.total * Decimal("100")
+            )
+            lines.append(
+                f"- {category}：{_format_money(category_total)} {summary.currency}"
+                f"（{percentage.quantize(Decimal('0.01'))}%）"
+            )
+    return "\n".join(lines)
 
 
 def _format_unsupported_monthly_total_reply(currency: str) -> str:
-    return f"我目前只支持查询本月 {currency} 支出总额。"
+    return f"我目前只支持以本币 {currency} 汇总支出。"
 
 
 def _format_record_summary(record: TransactionRecord) -> str:
@@ -483,18 +557,36 @@ def _message_date(timestamp: datetime, timezone_name: str) -> date:
     return timestamp.astimezone(ZoneInfo(timezone_name)).date()
 
 
-def _message_month(timestamp: datetime, timezone_name: str) -> str:
-    return _message_date(timestamp, timezone_name).strftime("%Y-%m")
+def _query_bounds(query: object, *, current_date: date) -> _ExpenseQueryBounds:
+    start_date = getattr(query, "start_date", None)
+    end_date = getattr(query, "end_date", None)
+    if start_date is not None and end_date is not None:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        if start > end:
+            raise ValueError("query start date is after end date")
+        return _ExpenseQueryBounds(start.isoformat(), end.isoformat())
+
+    month = getattr(query, "month", None)
+    if not isinstance(month, str):
+        raise ValueError("query has no date bounds")
+    month_start = date.fromisoformat(f"{month}-01")
+    month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+    if month_start.strftime("%Y-%m") == current_date.strftime("%Y-%m"):
+        month_end = current_date
+    return _ExpenseQueryBounds(month_start.isoformat(), month_end.isoformat())
 
 
-def _summarize_monthly_records(
+def _summarize_expense_records(
     records: list[TransactionRecord],
     *,
     currency: str,
     exchange_rate_provider: ExchangeRateProvider | None,
-) -> _MonthlyTotalSummary:
+) -> _ExpenseTotalSummary:
     total = Decimal("0")
-    conversions: list[ExchangeRateConversion] = []
+    foreign_totals: dict[str, Decimal] = {}
+    exchange_rate_dates: set[tuple[str, str]] = set()
+    category_totals: dict[str, Decimal] = {}
     for record in records:
         record_currency = normalize_currency_code(record.currency)
         if record_currency is None:
@@ -502,7 +594,11 @@ def _summarize_monthly_records(
                 f"Unsupported stored currency: {record.currency}"
             )
         if record_currency == currency:
-            total += record.amount
+            converted_amount = record.amount
+            total += converted_amount
+            category_totals[record.category] = (
+                category_totals.get(record.category, Decimal("0")) + converted_amount
+            )
             continue
         if exchange_rate_provider is None:
             raise ExchangeRateProviderError("Exchange-rate provider is not configured.")
@@ -514,17 +610,32 @@ def _summarize_monthly_records(
             date=record.date,
         )
         total += conversion.converted_amount
-        conversions.append(conversion)
+        foreign_totals[record_currency] = (
+            foreign_totals.get(record_currency, Decimal("0")) + record.amount
+        )
+        exchange_rate_dates.add((record_currency, conversion.rate_date))
+        category_totals[record.category] = (
+            category_totals.get(record.category, Decimal("0"))
+            + conversion.converted_amount
+        )
 
-    return _MonthlyTotalSummary(
+    return _ExpenseTotalSummary(
         total=total,
         currency=currency,
-        conversions=tuple(conversions),
+        foreign_totals=tuple(sorted(foreign_totals.items())),
+        exchange_rate_dates=tuple(sorted(exchange_rate_dates)),
+        category_totals=tuple(
+            sorted(category_totals.items(), key=lambda item: (-item[1], item[0]))
+        ),
     )
 
 
 def _format_money(amount: Decimal) -> str:
     return format(amount.quantize(MONTHLY_TOTAL_AMOUNT_QUANTUM), "f")
+
+
+def _format_original_money(amount: Decimal) -> str:
+    return format(amount.normalize(), "f")
 
 
 def _format_timestamp(timestamp: datetime, timezone_name: str) -> str:

@@ -1,21 +1,25 @@
-# PostgreSQL Backfill And Cutover
+# PostgreSQL Backfill, Verification, And Cutover
 
-This runbook migrates existing Google Sheets transaction rows into PostgreSQL
-and switches production writes only after verification. The migration scripts
-default to read-only dry-run behavior; writing to PostgreSQL requires the
-explicit `--execute` flag.
+PostgreSQL is the authoritative ledger target. This runbook imports the legacy
+Google Sheets ledger, verifies the resulting database state, enables PostgreSQL
+in staging, and defines the separate production cutover and rollback decisions.
+The migration scripts default to read-only dry-run behavior; writing to
+PostgreSQL requires the explicit `--execute` flag. Running a backfill or passing
+verification does not by itself authorize production exposure.
 
 ## Preconditions
 
 - PostgreSQL migrations have been applied through
   `0002_add_transaction_external_id.sql`.
 - `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and `DATABASE_URL` point to
-  the intended production resources.
-- `DEFAULT_TIMEZONE` matches production, currently `Asia/Singapore`.
+  the explicitly approved source and target environment.
+- `DEFAULT_TIMEZONE` matches the source ledger, currently `Asia/Singapore`.
 - Google Sheets has the `Transactions` worksheet and current headers from
   `docs/google-sheets-template.md`.
-- No production storage backend change is made until the verification report is
-  clean and an operator approves cutover.
+- The same spreadsheet has a separate `Ledger` worksheet with the 11-column
+  projection header. Do not replace or rename `Transactions`; it is required by
+  the temporary rollback repository.
+- No production bot configuration changes without explicit approval.
 
 Validate local migration files:
 
@@ -57,7 +61,7 @@ creates or reuses the internal user and provider identity, inserts an inbound
 message idempotency row, inserts the transaction, and appends a `created`
 transaction event. Re-running the command skips equivalent existing rows.
 
-Blocking preflight issues must be resolved before cutover:
+Blocking preflight issues must be resolved before executing the import:
 
 - Duplicate transaction IDs.
 - Duplicate source message tuples.
@@ -83,52 +87,55 @@ The report compares Google Sheets against PostgreSQL for:
 - Currency, category, and merchant counts.
 - Latest expense transaction per source user.
 
-Cutover requires a passing report. If the report fails, keep
-`STORAGE_BACKEND=google_sheets`, fix the data or script issue, rerun backfill,
-and rerun verification.
+Treat a failing report as an invalid copy: fix the data or script issue, rerun
+the backfill, and rerun verification. Keep runtime on its current backend.
 
-## Cutover
+## Staging Validation
 
-After a clean verification report and explicit operator approval:
+1. Deploy with `STORAGE_BACKEND=postgres` and a staging `DATABASE_URL`.
+2. Create one controlled expense and confirm the transaction and `created`
+   event committed before the reply.
+3. Update it and confirm the current row plus `updated` event.
+4. Replay the provider message and confirm no duplicate transaction or event.
+5. Query the containing date range and verify totals, rate dates, and category
+   percentages.
+6. Configure `google_sheet_exports`, run
+   `scripts/sync_postgres_to_google_sheets.py`, and verify the projected row in
+   `Ledger` while `Transactions` remains unchanged.
+7. Simulate a Sheet failure, verify `last_error` and the unchanged cursor, then
+   retry successfully.
+8. Run the `Deploy Sheet Projection Schedule` workflow for staging. Verify the
+   Cloud Scheduler trigger executes the Cloud Run Job on the configured cadence
+   and that repeated workflow runs update, rather than duplicate, both resources.
 
-1. Keep the Google Sheets credentials configured for rollback and manual
-   visibility.
-2. Set production non-secret config to `STORAGE_BACKEND=postgres`.
-3. Provide `DATABASE_URL` through the production secret mapping.
-4. Deploy the Cloud Run revision.
-5. Verify `/health`.
-6. Run `python scripts/verify_postgres_backfill.py` again before any controlled
-   test write and record the report in the issue or PR.
-7. Send one controlled bot message and confirm the new row appears in
-   PostgreSQL.
+If an older projection build ever wrote rows and advanced
+`google_sheet_exports.last_synced_event_id` before the `Ledger` worksheet was
+introduced, preserve the cursor value, reset the affected projection cursor,
+replay all events into `Ledger`, and verify the resulting rows before enabling
+the schedule. If no older projection build ran, no cursor reset is needed.
 
-After the controlled bot message, the full verification report will show that
-new PostgreSQL-only row as an extra transaction unless Google Sheets has been
-refreshed from a matching export or the report is scoped to the pre-cutover
-snapshot.
+## Production Cutover
 
-For Cloud Run, update `CLOUD_RUN_ENV_VARS` to include
-`STORAGE_BACKEND=postgres` and update `CLOUD_RUN_SECRET_MAPPINGS` to include
-`DATABASE_URL=<secret-name>:<version>`.
+Production cutover requires explicit approval after the backfill verification
+and staging validation above succeed. Set `STORAGE_BACKEND=postgres`, provide
+`DATABASE_URL`, deploy, and repeat the controlled create/update/replay/query and
+projection checks. A successful deploy or health check alone is not approval to
+expose PostgreSQL-backed behavior.
+
+After cutover approval, run the `Deploy Sheet Projection Schedule` workflow for
+the production GitHub environment. The projection job service account needs
+only Secret Manager access to its staging or production `DATABASE_URL` and
+Google credential secrets. The scheduler service account needs only permission
+to run that Cloud Run Job. Neither identity is the production bot runtime
+service account.
 
 ## Rollback
 
-Rollback is a runtime configuration change:
-
-1. Set production config back to `STORAGE_BACKEND=google_sheets`.
-2. Keep `GOOGLE_SHEET_ID` and `GOOGLE_SERVICE_ACCOUNT_JSON` mapped.
-3. Redeploy the Cloud Run revision.
-4. Verify `/health`.
-5. Send one controlled bot message and confirm the new row appears in Google
-   Sheets.
-
-Do not truncate or mutate PostgreSQL during rollback. If production accepted
-PostgreSQL-only writes before rollback, reconcile or export those rows before an
-extended Google Sheets rollback window.
-
-## Google Sheets Transition State
-
-After cutover, keep Google Sheets as the frozen migration source and optional
-manual visibility/export target. Do not edit imported rows manually during the
-transition window; manual edits after cutover will not automatically sync back
-to PostgreSQL.
+Restore `STORAGE_BACKEND=google_sheets` with the legacy Sheet credentials and
+pause the projection schedule so there is only one writer affecting the user
+view. The bot resumes against the unchanged 17-column `Transactions` worksheet;
+the 11-column `Ledger` projection remains separate. Before resuming
+normal traffic, identify PostgreSQL transactions committed during the cutover
+window and reconcile them into the Sheet without changing their stable IDs.
+Preserve PostgreSQL and its audit events for investigation; do not run a
+destructive migration.

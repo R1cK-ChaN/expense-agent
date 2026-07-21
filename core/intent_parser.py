@@ -170,8 +170,16 @@ class ParsedExpense:
 
 @dataclass(frozen=True)
 class MonthlyTotalQuery:
-    month: str
-    currency: str | None
+    """Expense-total query bounds.
+
+    ``month`` remains supported for compatibility with older parser responses.
+    New responses should provide an inclusive ``start_date``/``end_date`` pair.
+    """
+
+    month: str | None = None
+    currency: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -276,8 +284,12 @@ remove correction phrasing such as "改一下", "不是", "没有", or "我吃�
 the actual item is clear. Only include date when the user explicitly changes
 the date; do not copy TODAY into update_fields just because it is present in
 context.
-For query_monthly_total, query must be:
-{{"month": "YYYY-MM", "currency": "currency code or null"}}
+For query_monthly_total, resolve the requested time period and return inclusive
+date bounds. query must be:
+{{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "currency": "currency code or null"}}
+Examples: today uses TODAY for both dates; this month uses the first day of the
+month through TODAY; a named prior month uses that full calendar month. The
+currency is the reporting currency, normally DEFAULT_CURRENCY.
 
 Use the provided TODAY, TIMEZONE, and DEFAULT_CURRENCY context to resolve
 relative dates and omitted currencies. If a create_expense amount is missing,
@@ -616,15 +628,34 @@ def _parse_query(value: object, intent: ParserIntent) -> MonthlyTotalQuery | Non
     if not isinstance(value, Mapping):
         raise ValueError("query must be an object or null.")
 
+    currency = _parse_optional_string(value.get("currency"), "query.currency")
+    start_date = value.get("start_date")
+    end_date = value.get("end_date")
+    if start_date is not None or end_date is not None:
+        parsed_start = _parse_query_date(start_date, "query.start_date")
+        parsed_end = _parse_query_date(end_date, "query.end_date")
+        if parsed_start > parsed_end:
+            raise ValueError("query.start_date must not be after query.end_date.")
+        return MonthlyTotalQuery(
+            currency=currency,
+            start_date=parsed_start.isoformat(),
+            end_date=parsed_end.isoformat(),
+        )
+
     month = value.get("month")
     if not isinstance(month, str) or len(month) != 7:
-        raise ValueError("query.month must be YYYY-MM.")
+        raise ValueError("query must contain a date range or YYYY-MM month.")
     _validate_month(month)
+    return MonthlyTotalQuery(month=month, currency=currency)
 
-    return MonthlyTotalQuery(
-        month=month,
-        currency=_parse_optional_string(value.get("currency"), "query.currency"),
-    )
+
+def _parse_query_date(value: object, field_name: str) -> date:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be YYYY-MM-DD.")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{field_name} must be YYYY-MM-DD.") from error
 
 
 def _parse_optional_string(value: object, field_name: str) -> str | None:

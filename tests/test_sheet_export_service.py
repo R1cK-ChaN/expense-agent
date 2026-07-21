@@ -88,6 +88,38 @@ def test_sync_failure_records_retryable_state_without_advancing_cursor():
     assert export_repository.pending_events["user-1"][0].transaction.id == "txn-1"
 
 
+def test_later_scheduled_run_retries_event_after_sheet_failure():
+    export_repository = FakeSheetExportRepository(
+        configs=[make_config(user_id="user-1", spreadsheet_id="sheet-1")],
+        pending_events={
+            "user-1": [
+                make_event(
+                    event_id="event-1",
+                    user_id="user-1",
+                    transaction=make_transaction(transaction_id="txn-1"),
+                )
+            ],
+        },
+    )
+    sheets = FakeSheetRepositoryFactory(fail_spreadsheets={"sheet-1"})
+    service = DatabaseToGoogleSheetsSyncService(
+        export_repository=export_repository,
+        sheet_repository_factory=sheets,
+        clock=lambda: datetime(2026, 5, 20, 12, 30, tzinfo=timezone.utc),
+    )
+
+    first_result = service.sync_once()
+    sheets.fail_spreadsheets.clear()
+    second_result = service.sync_once()
+
+    assert first_result.failure_count == 1
+    assert second_result.failure_count == 0
+    assert second_result.synced_transaction_count == 1
+    assert export_repository.synced == [
+        ("user-1", "event-1", datetime(2026, 5, 20, 12, 30, tzinfo=timezone.utc))
+    ]
+
+
 def test_sync_marks_export_successful_without_rows_to_clear_previous_error():
     export_repository = FakeSheetExportRepository(
         configs=[

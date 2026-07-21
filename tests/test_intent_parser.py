@@ -5,6 +5,7 @@ import pytest
 
 from core.intent_parser import (
     IntentParser,
+    MonthlyTotalQuery,
     ParserContext,
     ParserIntent,
     SUPPORTED_CATEGORIES,
@@ -564,6 +565,33 @@ def test_parser_extracts_monthly_total_query():
     assert result.query.currency == "SGD"
 
 
+def test_parser_extracts_expense_total_date_range():
+    llm_client = FakeLLMClient(
+        {
+            "intent": "query_monthly_total",
+            "confidence": 0.9,
+            "expense": None,
+            "update_fields": {},
+            "query": {
+                "start_date": "2026-05-10",
+                "end_date": "2026-05-20",
+                "currency": "SGD",
+            },
+            "missing_fields": [],
+        }
+    )
+    parser = IntentParser(llm_client=llm_client)
+
+    result = parser.parse("5月10日到20日花了多少？", context=make_context())
+
+    assert result.is_success is True
+    assert result.query == MonthlyTotalQuery(
+        currency="SGD",
+        start_date="2026-05-10",
+        end_date="2026-05-20",
+    )
+
+
 def test_parser_classifies_unknown_message():
     llm_client = FakeLLMClient(
         {
@@ -594,6 +622,7 @@ def test_parser_classifies_unknown_message():
         '{"intent":"create_expense","confidence":NaN,"expense":{"date":"2026-05-20","amount":"12.5","currency":"SGD","category":"餐饮","merchant":null,"payment_method":null,"note":null},"update_fields":{},"query":null,"missing_fields":[]}',
         '{"intent":"create_expense","confidence":0.8,"expense":{"date":"2026-05-20","amount":"NaN","currency":"SGD","category":"餐饮","merchant":null,"payment_method":null,"note":null},"update_fields":{},"query":null,"missing_fields":[]}',
         '{"intent":"query_monthly_total","confidence":0.8,"expense":null,"update_fields":{},"query":{"month":"2-00005","currency":"SGD"},"missing_fields":[]}',
+        '{"intent":"query_monthly_total","confidence":0.8,"expense":null,"update_fields":{},"query":{"start_date":"2026-05-20","end_date":"2026-05-10","currency":"SGD"},"missing_fields":[]}',
     ],
 )
 def test_parser_returns_controlled_failure_for_malformed_llm_output(response):

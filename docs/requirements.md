@@ -2,7 +2,12 @@
 
 ## Product Goal
 
-Expense Agent is a Telegram-first expense logger. A user sends natural-language messages to a Telegram bot, the backend turns supported messages into structured expense records, stores them in Google Sheets, and replies with a clear confirmation or correction prompt.
+Expense Agent is an IM-first expense logger. A user sends natural-language
+messages to a supported bot, the backend turns supported messages into
+structured expense records, stores them in the authoritative ledger, and
+replies with a clear confirmation or correction prompt. PostgreSQL is the
+accepted ledger authority after explicit cutover; Google Sheets remains a
+temporary rollback backend and a replaceable user-visible projection.
 
 The MVP optimizes for reliable manual expense capture, correction, and lightweight spending lookup. It is not an autonomous finance agent.
 
@@ -33,7 +38,8 @@ As a user, I can receive a useful prompt when a message cannot safely become a t
 
 Expected behavior:
 
-- Missing amount, unsupported currency, invalid date, or unclear intent does not write to Google Sheets.
+- Missing amount, unsupported currency, invalid date, or unclear intent does
+  not mutate the authoritative ledger.
 - Ambiguous parse results produce a clarification reply that names the field needing correction.
 - Unsupported requests receive a concise explanation of what the MVP supports.
 
@@ -65,14 +71,22 @@ As a user, I can ask simple questions about previously recorded spending.
 Examples:
 
 - `how much did I spend today?`
-- `这个月餐饮花了多少？`
-- `show last 5 expenses`
+- `这个月花了多少？`
+- `5月10日到20日花了多少？`
 
 Expected behavior:
 
-- Queries read from Google Sheets without writing new transaction rows.
-- Supported filters are date range, category, and recent transaction count.
-- The bot replies with totals or a compact list, depending on the query.
+- Queries read from the selected authoritative repository without writing new
+  transaction rows; after cutover that repository is PostgreSQL.
+- Querying, aggregation, exchange-rate conversion, and reply formatting must not
+  append or update a transaction, audit event, or Google Sheets projection row.
+- A new row may be appended only after a create-expense request passes parsing,
+  validation, and duplicate checks.
+- The implemented query supports an inclusive date range and returns a total
+  with category breakdowns; category-filtered and recent-expense list queries
+  remain future work.
+- Legacy current-month parser responses end on the requesting message's local
+  date rather than including future-dated rows.
 
 ## MVP Defaults
 
@@ -110,8 +124,11 @@ Supported mainstream currencies:
 - `INR`
 - `PHP`
 
-Monthly total summaries convert non-SGD rows to SGD with historical daily
-reference rates and include rate-date context when conversion is used.
+Expense confirmations preserve the original foreign-currency amount and show
+its SGD equivalent using the transaction-date reference rate. Spending queries
+accept an inclusive date range, convert every foreign-currency row to SGD using
+its transaction-date rate, and report the SGD total, original foreign-currency
+subtotals, actual rate dates used, and SGD category totals with percentages.
 
 ## Supported Categories
 
@@ -159,7 +176,7 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 
 ### Expense Creation
 
-- Given a message with a positive amount and expense description, when the bot handles it, then one transaction is appended to Google Sheets.
+- Given a message with a positive amount and expense description, when the bot handles it, then one transaction and its creation event are committed in PostgreSQL before confirmation.
 - Given a message without an explicit currency, when the transaction is valid, then the configured default currency is stored.
 - Given a message without an explicit date, when the transaction is valid, then the Telegram message date is stored in the configured timezone.
 - Given a message with a supported category synonym, when the parser returns a transaction, then the stored category uses the normalized category value.
@@ -181,18 +198,23 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 
 ### Queries
 
-- Given a supported total-spend query, when matching transactions exist, then the bot replies with the total amount grouped by currency.
-- Given a supported category query, when matching transactions exist, then the bot replies using normalized category names.
-- Given a recent-expenses query, when transactions exist, then the bot replies with a compact list ordered newest first.
+- Given a supported total-spend query, when matching transactions exist, then the bot replies with the SGD total, original foreign-currency subtotals, and category amounts and percentages in SGD.
+- Given a foreign-currency conversion uses a previous available rate, when the
+  bot replies, then the actual rate date is visible.
+- Given a legacy current-month parser response, when the bot reads matching
+  transactions, then the inclusive end date is the requesting message's local
+  date.
 - Given a query has no matching transactions, when the bot handles it, then the bot replies with an empty-result message and does not write to storage.
 
 ## Future MVP Issue Breakdown
 
 Future issues should map each acceptance case to a red test or explicit manual check before implementation:
 
+- Category-filtered spending queries and recent-expense list queries.
 - Parser contract: supported intents, required fields, confidence, and category normalization.
 - Domain validation: transaction invariants, update invariants, query invariants, and idempotency.
-- Google Sheets repository: append, update, lookup, and query behavior against a fake or test sheet.
+- Repository contracts: PostgreSQL authority plus temporary Google Sheets
+  rollback compatibility against fakes or approved test infrastructure.
 - Telegram adapter: update decoding, message metadata capture, reply formatting, and duplicate delivery behavior.
 - Application service orchestration: command routing, validation before storage, storage before confirmation, and error replies.
 - Configuration and deployment baseline: timezone, currency, credentials, and environment validation.

@@ -2,7 +2,11 @@
 
 ## Overview
 
-The domain model separates user intent, parsed data, validation, source metadata, and persistence. Telegram and WeChat messages are provider envelopes, parser results describe the user's intent, domain validation decides whether the intent is safe to execute, and Google Sheets stores accepted transactions.
+The domain model separates user intent, parsed data, validation, source metadata,
+and persistence. Telegram and WeChat messages are provider envelopes, parser
+results describe the user's intent, domain validation decides whether the intent
+is safe to execute, PostgreSQL owns accepted transaction state, and Google Sheets
+is a derived user-visible projection.
 
 ## IM Source Metadata
 
@@ -111,10 +115,15 @@ Update recent expense fields:
 
 - `update_fields`: map of fields to replace on the user's latest expense after validation.
 
-Monthly total query fields:
+Expense total query fields:
 
-- `month`: explicit or inferred month as `YYYY-MM`.
-- `currency`: currency code for the total, or null when omitted.
+- `start_date`: inclusive range start as `YYYY-MM-DD`.
+- `end_date`: inclusive range end as `YYYY-MM-DD`.
+- `currency`: reporting currency, or null to use the configured local currency.
+
+Legacy parser responses containing `month` as `YYYY-MM` remain accepted and
+are expanded to the full calendar month, except that the current month ends on
+the requesting message's date so future-dated rows are not included.
 
 Invariants:
 
@@ -199,7 +208,8 @@ Invariants:
 - Query requests must not append, update, or delete transaction rows.
 - Query date ranges must be bounded before storage access.
 - Query results must be scoped to the requesting user or chat policy defined by the implementation issue.
-- Monthly total queries return the configured default-currency total for the current month.
+- Total queries return the configured default-currency total for the requested
+  inclusive date range; legacy current-month queries end on the request date.
 - Non-default-currency expenses are converted with transaction-date daily reference rates for reporting only.
 - When the exact transaction date has no rate, the latest previous available rate may be used and the rate date must be visible in the reply context.
 - Original stored `amount` and `currency` must not be overwritten by report conversion.

@@ -279,6 +279,33 @@ class PostgresTransactionRepository:
 
         return [_row_to_record(row, self._timezone) for row in rows]
 
+    def list_expenses(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[TransactionRecord]:
+        _validate_date_range(start_date, end_date)
+        try:
+            with self._connection_factory() as connection:
+                rows = connection.execute(
+                    SELECT_TRANSACTIONS_BY_DATE_RANGE_SQL,
+                    {
+                        "platform": str(source_platform),
+                        "platform_user_id": str(user_id),
+                        "start_date": start_date,
+                        "end_date": end_date,
+                    },
+                ).fetchall()
+        except Exception as error:
+            raise TransactionRepositoryError(
+                "Failed to list expenses by date range from PostgreSQL."
+            ) from error
+
+        return [_row_to_record(row, self._timezone) for row in rows]
+
     def sum_monthly_expense(
         self,
         *,
@@ -724,6 +751,24 @@ order by t.transaction_date asc, t.created_at asc, t.id asc
 """
 
 
+SELECT_TRANSACTIONS_BY_DATE_RANGE_SQL = f"""
+-- postgres_repository.select_transactions_by_date_range
+select
+{RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK}
+from user_identities request_ui
+join transactions t on t.user_id = request_ui.user_id
+left join inbound_messages m on m.id = t.created_from_message_id
+left join user_identities source_ui on source_ui.id = m.identity_id
+join user_identities fallback_ui on fallback_ui.id = request_ui.id
+where request_ui.platform = %(platform)s
+  and request_ui.platform_user_id = %(platform_user_id)s
+  and t.transaction_type = 'expense'
+  and t.transaction_date >= %(start_date)s
+  and t.transaction_date <= %(end_date)s
+order by t.transaction_date asc, t.created_at asc, t.id asc
+"""
+
+
 SELECT_ALL_TRANSACTIONS_SQL = f"""
 -- postgres_repository.select_all_transactions
 select
@@ -892,6 +937,16 @@ def _validate_month(month: str) -> None:
         datetime.strptime(month, "%Y-%m")
     except ValueError as error:
         raise ValueError("month must use YYYY-MM format") from error
+
+
+def _validate_date_range(start_date: str, end_date: str) -> None:
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise ValueError("dates must use YYYY-MM-DD format") from error
+    if start > end:
+        raise ValueError("start_date must not be after end_date")
 
 
 def _month_bounds(month: str) -> tuple[str, str]:
