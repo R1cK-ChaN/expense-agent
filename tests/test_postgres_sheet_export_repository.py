@@ -5,6 +5,7 @@ from typing import Any
 
 from core.sheet_export import LedgerTransaction
 from integrations.postgres.sheet_export_repository import (
+    LIST_PENDING_EVENTS_SQL,
     PostgresSheetExportRepository,
 )
 
@@ -84,6 +85,10 @@ def test_list_pending_events_returns_current_transaction_state_for_one_user():
         created_at="2026-05-19T10:00:00+00:00",
         updated_at="2026-05-19T10:00:00+00:00",
     )
+
+
+def test_pending_event_query_types_a_null_uuid_cursor_for_postgresql():
+    assert "%(last_synced_event_id)s::uuid is null" in LIST_PENDING_EVENTS_SQL
 
 
 def test_list_pending_events_starts_after_last_synced_event_cursor():
