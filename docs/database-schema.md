@@ -168,6 +168,8 @@ create table transactions (
     external_id text not null unique,
     user_id uuid not null references users(id),
     created_from_message_id uuid references inbound_messages(id),
+    function_batch_id uuid references function_call_batches(id),
+    function_call_index integer,
     transaction_date date not null,
     amount numeric(18, 4) not null check (amount > 0),
     currency char(3) not null,
@@ -179,6 +181,7 @@ create table transactions (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique (created_from_message_id),
+    unique (function_batch_id, function_call_index),
     check (transaction_type in ('expense'))
 );
 ```
@@ -188,10 +191,15 @@ Notes:
 - `id` is the internal database key. `external_id` preserves the existing
   domain-facing `TransactionRecord.id` value used by the application service
   and Google Sheets repository, including non-UUID values such as `txn-...`.
-- `created_from_message_id` is nullable only to make legacy Google Sheets imports
-  straightforward. New bot-created rows should always set it.
+- The legacy single-transaction path sets `created_from_message_id` and retains
+  its uniqueness constraint for rolling-deploy compatibility.
+- The function-batch path leaves `created_from_message_id` null and sets both
+  `function_batch_id` and `function_call_index`. Their unique pair permits
+  multiple expenses from one inbound message while making each accepted call
+  retry-safe.
 - Source platform, source user, chat, and message IDs are not duplicated here.
-  They are available through `created_from_message_id`.
+  They are available through either the legacy message link or the function
+  batch's inbound-message link.
 - `currency` and `category` stay as validated text in v1. Lookup tables can be
   added later if requirements need user-defined categories, translations, or
   richer category metadata.
@@ -220,6 +228,36 @@ Notes:
 - `old_values` and `new_values` are intentionally JSONB. This is not strict 3NF,
   but it is appropriate for audit logs because the main query model remains
   normalized.
+
+### function_call_batches and function_call_executions
+
+`function_call_batches` durably binds one accepted, ordered LLM proposal to one
+unique inbound provider delivery. It stores the accepted calls, batch status,
+deterministic operation results, and final reply. A webhook retry with the same
+platform/chat/provider dedupe key therefore returns the stored reply instead of
+selecting or executing functions again.
+
+A new row begins in `selecting` with an empty call array while one request owns
+model selection. The owner atomically replaces it with the non-empty accepted
+batch and moves it to `accepted`; concurrent deliveries remain retryable and do
+not call the model.
+
+`function_call_executions` keys each side-effecting call by
+`(function_batch_id, function_call_index)`. Create calls also use the matching
+unique columns on `transactions`; update calls retain the execution row and
+target transaction so a resumed batch cannot apply the update twice.
+
+All write calls in one batch execute in one database transaction. The batch
+moves to `writes_committed` before read-only statistics run. A statistics or
+rendering failure cannot roll back those committed ledger writes.
+
+### pending_requests
+
+`pending_requests` stores at most one structured clarification continuation per
+provider identity and chat. It contains only the proposed function, known
+arguments, missing fields, and a ten-minute expiry. A replacement request
+overwrites the prior row; successful execution deletes it. Message history,
+cross-channel memory, and content-based duplicate detection are not stored.
 
 ### google_sheet_exports
 

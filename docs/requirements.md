@@ -82,11 +82,30 @@ Expected behavior:
   append or update a transaction, audit event, or Google Sheets projection row.
 - A new row may be appended only after a create-expense request passes parsing,
   validation, and duplicate checks.
-- The implemented query supports an inclusive date range and returns a total
-  with category breakdowns; category-filtered and recent-expense list queries
-  remain future work.
+- The deterministic function runtime supports inclusive summaries, period
+  comparisons, category and merchant filters, top expenses, and recent-expense
+  lists without model-authored totals or prose.
 - Legacy current-month parser responses end on the requesting message's local
   date rather than including future-dated rows.
+
+### Execute One Deterministic Function Batch
+
+As a user, I can combine multiple clear expense and statistics requests in one
+message. The model selects one ordered batch of allowlisted functions; backend
+code validates and executes it and writes the final reply.
+
+Expected behavior:
+
+- The complete batch is validated before any ledger mutation.
+- All create and update calls commit in one PostgreSQL transaction. Reads run
+  after that commit and can observe its writes.
+- The same provider delivery reuses its persisted calls and reply. A different
+  provider message ID executes again even when its text is identical.
+- Clarification retains at most one structured request per platform/user/chat
+  for ten minutes. It does not retain chat history.
+- Delete and bulk-destructive functions are not exposed.
+- The LLM has no repository access and never calculates or authors the final
+  financial response.
 
 ## MVP Defaults
 
@@ -210,7 +229,6 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 
 Future issues should map each acceptance case to a red test or explicit manual check before implementation:
 
-- Category-filtered spending queries and recent-expense list queries.
 - Parser contract: supported intents, required fields, confidence, and category normalization.
 - Domain validation: transaction invariants, update invariants, query invariants, and idempotency.
 - Repository contracts: PostgreSQL authority plus temporary Google Sheets

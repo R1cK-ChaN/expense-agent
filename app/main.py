@@ -17,13 +17,25 @@ from config.settings import (
     load_settings,
 )
 from core.intent_parser import IntentParser
+from core.function_batch_executor import FunctionBatchExecutor
+from core.function_batch_handler import FunctionBatchHandler
+from core.function_selector import FunctionSelector
+from core.pending_requests import PendingRequestService
+from core.statistics import StatisticsService
 from core.transaction_service import TransactionService
 from integrations.exchange_rates import FrankfurterExchangeRateProvider
 from integrations.google_sheets.repository import (
     GoogleSheetsTransactionRepository,
     build_google_sheets_values_client,
 )
-from integrations.llm_client import OpenAICompatibleLLMClient
+from integrations.llm_client import (
+    OpenAICompatibleLLMClient,
+    OpenAIResponsesFunctionClient,
+)
+from integrations.postgres.function_batch_repository import (
+    PostgresFunctionBatchRepository,
+    PostgresPendingRequestRepository,
+)
 from integrations.postgres.repository import PostgresTransactionRepository
 from integrations.telegram_client import TelegramBotClient
 
@@ -86,6 +98,9 @@ def create_app(
 
 
 def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler | None:
+    if settings.function_batches_enabled:
+        return _build_function_batch_text_handler(settings)
+
     if not _parser_configured(settings):
         return None
 
@@ -105,6 +120,63 @@ def _build_transaction_text_handler(settings: Settings) -> TelegramTextHandler |
         default_currency=settings.default_currency,
     )
     return service.handle_message
+
+
+def _build_function_batch_text_handler(
+    settings: Settings,
+) -> TelegramTextHandler | None:
+    if (
+        settings.storage_backend != STORAGE_BACKEND_POSTGRES
+        or not settings.database_url
+        or not settings.parser_api_key
+    ):
+        return None
+
+    ledger_repository = PostgresTransactionRepository(
+        database_url=settings.database_url,
+        timezone=settings.default_timezone,
+    )
+    batch_repository = PostgresFunctionBatchRepository(
+        database_url=settings.database_url,
+    )
+    pending_requests = PendingRequestService(
+        repository=PostgresPendingRequestRepository(
+            database_url=settings.database_url,
+        )
+    )
+    exchange_rates = FrankfurterExchangeRateProvider()
+    executor = FunctionBatchExecutor(
+        repository=batch_repository,
+        statistics=StatisticsService(
+            repository=ledger_repository,
+            currency=settings.default_currency,
+            exchange_rate_provider=exchange_rates,
+        ),
+        pending_requests=pending_requests,
+        timezone=settings.default_timezone,
+        default_currency=settings.default_currency,
+        id_factory=_new_transaction_id,
+    )
+    handler = FunctionBatchHandler(
+        selector=FunctionSelector(
+            llm_client=OpenAIResponsesFunctionClient(
+                api_key=settings.parser_api_key,
+                model=settings.agent_model,
+            )
+        ),
+        executor=executor,
+        repository=batch_repository,
+        pending_requests=pending_requests,
+        timezone=settings.default_timezone,
+        default_currency=settings.default_currency,
+    )
+    return handler.handle_message
+
+
+def _new_transaction_id() -> str:
+    from uuid import uuid4
+
+    return f"txn-{uuid4()}"
 
 
 def _parser_configured(settings: Settings) -> bool:

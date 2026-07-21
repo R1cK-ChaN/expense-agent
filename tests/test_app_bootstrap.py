@@ -225,6 +225,52 @@ def test_configured_app_wires_postgres_as_authoritative_ledger(monkeypatch):
     assert repositories[0].records[0].source_message_id == "9001"
 
 
+def test_function_batch_runtime_uses_gpt_5_5_responses_and_postgres(monkeypatch):
+    from app import main as app_main
+
+    response_clients = []
+    repositories = []
+    monkeypatch.setenv("FUNCTION_BATCHES_ENABLED", "true")
+    monkeypatch.setenv("AGENT_MODEL", "gpt-5.5")
+    monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
+    monkeypatch.delenv("PARSER_MODEL", raising=False)
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:password@localhost/db")
+    monkeypatch.setattr(
+        app_main,
+        "OpenAIResponsesFunctionClient",
+        lambda **kwargs: response_clients.append(kwargs) or FakeFunctionClient(),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "PostgresTransactionRepository",
+        lambda **kwargs: repositories.append(("ledger", kwargs))
+        or FakeStatisticsRepository(),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "PostgresFunctionBatchRepository",
+        lambda **kwargs: repositories.append(("batch", kwargs))
+        or FakeBatchStateRepository(),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "PostgresPendingRequestRepository",
+        lambda **kwargs: repositories.append(("pending", kwargs))
+        or FakePendingStateRepository(),
+    )
+
+    handler = app_main._build_transaction_text_handler(app_main.load_settings())
+
+    assert handler is not None
+    assert response_clients == [{"api_key": "parser-secret", "model": "gpt-5.5"}]
+    assert [name for name, _kwargs in repositories] == [
+        "ledger",
+        "batch",
+        "pending",
+    ]
+
+
 def test_postgres_backend_without_database_url_preserves_health(monkeypatch):
     from app import main as app_main
 
@@ -396,6 +442,30 @@ class FakeQueryLLMClient:
             },
             "missing_fields": []
         }"""
+
+
+class FakeFunctionClient:
+    def select_functions(self, **kwargs):
+        raise AssertionError("model should not be called during wiring")
+
+
+class FakeStatisticsRepository:
+    pass
+
+
+class FakeBatchStateRepository:
+    pass
+
+
+class FakePendingStateRepository:
+    def get(self, **kwargs):
+        return None
+
+    def upsert(self, request):
+        pass
+
+    def delete(self, **kwargs):
+        pass
 
 
 class InMemorySheetsClient:

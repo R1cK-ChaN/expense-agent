@@ -26,6 +26,23 @@ owning documents linked below.
 - Detail: [Domain Model](domain-model.md#parser-result) and
   [Architecture](architecture.md#parser-port).
 
+### Function Selection
+
+- Input: one current user message plus backend-owned date, timezone, currency,
+  and any bounded pending-request context.
+- Output: one non-empty ordered batch containing only allowlisted application
+  function proposals with strict structured arguments.
+- Contract: the model runs once, never receives operation results, never accesses
+  a repository, and never produces user-visible reply text. Every proposal is
+  untrusted until backend validation succeeds.
+- Runtime: `FUNCTION_BATCHES_ENABLED=true` selects this path only with
+  PostgreSQL. It uses the Responses API and `AGENT_MODEL=gpt-5.5`; the default
+  remains disabled until explicit production exposure. The normal release path
+  validates in staging first; direct production validation was explicitly
+  approved for the 2026-07-21 release.
+- Detail: [Domain Model](domain-model.md#canonical-language) and
+  [Architecture](architecture.md#function-selection-transition).
+
 ### Authoritative Ledger Repository
 
 - Input: validated transaction commands and source-message identity.
@@ -38,6 +55,17 @@ owning documents linked below.
   [Database Schema](database-schema.md), and
   [Architecture](architecture.md#postgresql-repository).
 
+### Function Batch Repository
+
+- Input: exact provider message identity, one accepted ordered call batch, and
+  validated write commands.
+- Output: persisted batch/reply replay state and committed operation records.
+- Contract: accepted calls are immutable on retry; all write calls are atomic;
+  legacy single-message transactions and new batch transactions both prevent
+  duplicate delivery writes during rollout or rollback.
+- Detail: [ADR 003](decisions/003-deterministic-function-batches.md) and
+  [Database Schema](database-schema.md#function_call_batches-and-function_call_executions).
+
 ### Spending Query Repository
 
 - Input: one internal user and an inclusive date range.
@@ -46,6 +74,18 @@ owning documents linked below.
   mutate transaction or projection state.
 - Detail: [Requirements](requirements.md#query-stored-spending) and
   [Architecture](architecture.md#query-transactions).
+
+### Deterministic Statistics
+
+- Input: one internal user, a backend-resolved bounded date range, optional
+  validated filters, and an approved reporting currency.
+- Output: typed summaries, comparisons, ranked expenses, or recent expenses
+  rendered without an LLM.
+- Contract: repository access is read-only; date resolution, filtering,
+  conversion, aggregation, ranking, percentages, and final text are owned by
+  backend code.
+- Detail: [Requirements](requirements.md#query-stored-spending) and
+  [Architecture](architecture.md#function-selection-transition).
 
 ### Google Sheets Projection
 

@@ -27,6 +27,24 @@ def test_settings_default_to_google_sheets_storage_backend():
     assert settings.public_dict()["storage_backend"] == "google_sheets"
 
 
+def test_function_batch_runtime_defaults_disabled_with_gpt_5_5_target():
+    settings = load_settings({})
+
+    assert settings.function_batches_enabled is False
+    assert settings.agent_model == "gpt-5.5"
+    assert settings.public_dict()["function_batches_enabled"] is False
+    assert settings.public_dict()["agent_model"] == "gpt-5.5"
+
+
+def test_function_batch_runtime_can_be_enabled_explicitly():
+    settings = load_settings(
+        {"FUNCTION_BATCHES_ENABLED": "true", "AGENT_MODEL": "gpt-5.5"}
+    )
+
+    assert settings.function_batches_enabled is True
+    assert settings.agent_model == "gpt-5.5"
+
+
 def test_settings_do_not_expose_secret_values():
     settings = load_settings(
         {

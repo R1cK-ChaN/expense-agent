@@ -219,6 +219,50 @@ Provider-specific chat completion HTTP code lives in `integrations/llm_client.py
 The adapter uses an OpenAI-compatible JSON chat-completions request and exposes
 only the `complete_json` method required by the parser port.
 
+### Function Selection Transition
+
+Issue #59 is introducing a replacement boundary without switching production
+runtime traffic prematurely:
+
+- `core/function_calls.py` owns the provider-neutral application-function
+  allowlist, strict tool schemas, untrusted proposals, and ordered non-empty
+  batches.
+- `core/function_selector.py` supplies only the current message and explicit
+  backend context, requests one complete batch, and has no execution or reply
+  responsibility.
+- `integrations/llm_client.py` hides the OpenAI Responses API payload and accepts
+  only completed allowlisted function calls; assistant text, empty batches,
+  unknown functions, and malformed arguments fail closed.
+- `core/statistics.py` owns bounded period resolution, read-only filters,
+  currency conversion, aggregation, comparisons, ranking, and deterministic
+  statistics rendering. The existing monthly query path already reuses its
+  summary calculation and renderer.
+- `core/function_batch_executor.py` validates the entire proposal before any
+  persistence, sends all create/update commands through one atomic write unit,
+  runs reads only after that commit, and constructs the final reply without an
+  LLM.
+- `integrations/postgres/function_batch_repository.py` owns durable provider
+  delivery claims, call-index idempotency, write-batch state, stored replies,
+  and the single expiring pending request per chat.
+
+`app/main.py` now wires this path when `FUNCTION_BATCHES_ENABLED=true`, the
+selected storage backend is PostgreSQL, and required credentials are present.
+The setting defaults to false, so production remains on the legacy parser path
+until an explicit production exposure decision. The normal release path uses
+staging first; the owner approved direct production validation for the
+2026-07-21 release. The new schema is expand-compatible: the legacy
+`created_from_message_id` uniqueness contract remains intact while new batch
+transactions use a separate batch/call identity.
+
+Exact delivery replay is checked before model selection. Incomplete deliveries
+resume the persisted accepted calls rather than accepting a second proposal.
+New deliveries first acquire a PostgreSQL `selecting` claim, so concurrent
+webhook copies cannot both call the model. Repository failures remain HTTP
+failures so the provider can retry instead of acknowledging an unpersisted
+reply.
+Semantic logs contain outcome, function names/count, and latency, but not call
+arguments, amounts, message text, or provider/user identifiers.
+
 ### Google Sheets Repository
 
 Owns:
@@ -395,6 +439,9 @@ Required configuration for transaction handling:
 - Telegram webhook secret token.
 - WeChat Official Account token for callback signature verification.
 - Parser provider credentials and model identifier.
+- `FUNCTION_BATCHES_ENABLED`, defaulting to false. When true,
+  `AGENT_MODEL=gpt-5.5` and PostgreSQL are required; `PARSER_MODEL` applies only
+  to the legacy parser path.
 - `STORAGE_BACKEND`, defaulting to `google_sheets` until explicit production cutover.
 - `DATABASE_URL` when `STORAGE_BACKEND=postgres` or when running database tools.
 - For `sync_postgres_to_google_sheets.py` runs, a Google service

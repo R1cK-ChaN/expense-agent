@@ -25,6 +25,8 @@ class Settings:
     default_timezone: str
     default_currency: str
     parser_model: str | None
+    agent_model: str
+    function_batches_enabled: bool
     storage_backend: str
     google_sheet_id: str | None
     google_worksheet_name: str
@@ -42,6 +44,8 @@ class Settings:
             "default_timezone": self.default_timezone,
             "default_currency": self.default_currency,
             "parser_model": self.parser_model,
+            "agent_model": self.agent_model,
+            "function_batches_enabled": self.function_batches_enabled,
             "storage_backend": self.storage_backend,
             "google_sheet_id_configured": bool(self.google_sheet_id),
             "google_worksheet_name": self.google_worksheet_name,
@@ -60,6 +64,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         default_timezone=values.get("DEFAULT_TIMEZONE", "Asia/Singapore"),
         default_currency=values.get("DEFAULT_CURRENCY", "SGD"),
         parser_model=_optional_value(values, "PARSER_MODEL"),
+        agent_model=values.get("AGENT_MODEL", "gpt-5.5").strip() or "gpt-5.5",
+        function_batches_enabled=_boolean_value(
+            values,
+            "FUNCTION_BATCHES_ENABLED",
+        ),
         storage_backend=_storage_backend(values),
         google_sheet_id=_optional_value(values, "GOOGLE_SHEET_ID"),
         google_worksheet_name=values.get(
@@ -91,6 +100,10 @@ def _storage_backend(values: Mapping[str, str]) -> str:
     if value is None:
         return DEFAULT_STORAGE_BACKEND
     return value.strip().lower() or DEFAULT_STORAGE_BACKEND
+
+
+def _boolean_value(values: Mapping[str, str], name: str) -> bool:
+    return values.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _telegram_bot_username(values: Mapping[str, str]) -> str | None:

@@ -30,7 +30,7 @@ Configure these as repository variables or production environment variables:
 | `CLOUD_RUN_REGION` | Cloud Run and Artifact Registry region, for example `asia-southeast1`. |
 | `CLOUD_RUN_SERVICE` | Cloud Run service name, for example `expense-agent`. |
 | `ARTIFACT_REGISTRY_REPOSITORY` | Docker Artifact Registry repository name. |
-| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL`; use `STORAGE_BACKEND=postgres` in staging and only after approved production cutover. |
+| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. The legacy path requires `PARSER_MODEL`. The function path requires `FUNCTION_BATCHES_ENABLED=true`, `AGENT_MODEL=gpt-5.5`, and `STORAGE_BACKEND=postgres`. |
 | `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include parser and IM-provider secrets plus `DATABASE_URL` for PostgreSQL or `GOOGLE_SERVICE_ACCOUNT_JSON` for the rollback backend. |
 
 Optional variables:
@@ -47,15 +47,36 @@ Example non-secret config:
 SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres
 ```
 
+Function-batch configuration after migration `0004` is applied:
+
+```text
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-5-nano,FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,STORAGE_BACKEND=postgres
+```
+
+The normal release path validates create, multi-create, update,
+duplicate-delivery, clarification, and statistics before production exposure.
+For the 2026-07-21 release, the owner explicitly approved skipping staging and
+running those smokes in production. Deploy the code with
+`FUNCTION_BATCHES_ENABLED=false`, apply migration `0004`, then enable the flag.
+Disable it immediately to return to the legacy parser handler if a material
+production smoke fails; the schema and legacy duplicate queries remain
+compatible with batch-created rows.
+Retain `PARSER_MODEL` while the function path is enabled so changing the flag
+to false remains a valid, immediate legacy-handler deployment.
+When the variable is omitted, the deploy script explicitly writes
+`FUNCTION_BATCHES_ENABLED=false` so Cloud Run cannot retain a prior enabled
+value across rollback deployments.
+
 Example Secret Manager mappings:
 
 ```text
 TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,DATABASE_URL=database-url:latest
 ```
 
-The deployment script validates credentials for the selected backend.
-Production must retain its current setting until backfill verification and the
-staging smoke path succeed; a successful deploy does not authorize cutover.
+The deployment script validates credentials for the selected backend. A
+successful deploy does not authorize cutover unless the owner has separately
+approved production exposure; that approval was recorded for the 2026-07-21
+direct-production validation.
 
 For Cloud SQL, store a percent-encoded Unix-socket URL in the `DATABASE_URL`
 Secret Manager secret:

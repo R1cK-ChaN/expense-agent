@@ -50,6 +50,11 @@ Google Sheets setup is documented in
 `docs/google-sheets-template.md`, and the backfill, verification, cutover, and
 rollback procedure is in `docs/postgres-backfill-cutover.md`.
 
+The deterministic one-shot function runtime is enabled separately with
+`FUNCTION_BATCHES_ENABLED=true` and `AGENT_MODEL=gpt-5.5`. It requires
+PostgreSQL and migration `0004`. Production exposure requires an explicit
+release decision and the smoke/rollback procedure in `docs/cloud-run-cicd.md`.
+
 ## Deployment
 
 CI/CD for Cloud Run is defined in `.github/workflows/`. Pull requests run

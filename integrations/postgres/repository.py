@@ -306,6 +306,35 @@ class PostgresTransactionRepository:
 
         return [_row_to_record(row, self._timezone) for row in rows]
 
+    def list_recent_expenses(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        category: str | None,
+        merchant: str | None,
+        limit: int,
+    ) -> list[TransactionRecord]:
+        if limit < 1 or limit > 20:
+            raise ValueError("recent expense limit must be between 1 and 20")
+        try:
+            with self._connection_factory() as connection:
+                rows = connection.execute(
+                    SELECT_RECENT_TRANSACTIONS_SQL,
+                    {
+                        "platform": str(source_platform),
+                        "platform_user_id": str(user_id),
+                        "category": category,
+                        "merchant": merchant,
+                        "limit": limit,
+                    },
+                ).fetchall()
+        except Exception as error:
+            raise TransactionRepositoryError(
+                "Failed to list recent expenses from PostgreSQL."
+            ) from error
+        return [_row_to_record(row, self._timezone) for row in rows]
+
     def sum_monthly_expense(
         self,
         *,
@@ -487,19 +516,24 @@ RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK = """
     t.merchant as merchant,
     t.payment_method as payment_method,
     t.note as note,
-    coalesce(m.platform, fallback_ui.platform, '') as source_platform,
+    coalesce(m.platform, batch_m.platform, fallback_ui.platform, '')
+        as source_platform,
     coalesce(
         source_ui.platform_user_id,
+        batch_ui.platform_user_id,
         fallback_ui.platform_user_id,
         ''
     ) as source_user_id,
-    coalesce(source_ui.username, fallback_ui.username) as source_username,
+    coalesce(source_ui.username, batch_ui.username, fallback_ui.username)
+        as source_username,
     coalesce(
         source_ui.display_name,
+        batch_ui.display_name,
         fallback_ui.display_name
     ) as source_user_display_name,
-    coalesce(m.platform_chat_id, '') as source_chat_id,
-    coalesce(m.platform_message_id, '') as source_message_id,
+    coalesce(m.platform_chat_id, batch_m.platform_chat_id, '') as source_chat_id,
+    coalesce(m.platform_message_id, batch_m.platform_message_id, '')
+        as source_message_id,
     t.created_at as created_at,
     t.updated_at as updated_at
 """
@@ -674,10 +708,19 @@ SELECT_TRANSACTION_BY_MESSAGE_ID_SQL = f"""
 -- postgres_repository.select_transaction_by_message_id
 select
 {RECORD_SELECT_COLUMNS}
-from transactions t
-join inbound_messages m on m.id = t.created_from_message_id
+from inbound_messages m
 join user_identities source_ui on source_ui.id = m.identity_id
+join transactions t on (
+    t.created_from_message_id = m.id
+    or exists (
+        select 1
+        from function_call_batches b
+        where b.id = t.function_batch_id
+          and b.inbound_message_id = m.id
+    )
+)
 where m.id = %(message_id)s
+order by t.function_call_index asc nulls first, t.id asc
 limit 1
 """
 
@@ -688,11 +731,20 @@ select
 {RECORD_SELECT_COLUMNS}
 from inbound_messages m
 join user_identities source_ui on source_ui.id = m.identity_id
-join transactions t on t.created_from_message_id = m.id
+join transactions t on (
+    t.created_from_message_id = m.id
+    or exists (
+        select 1
+        from function_call_batches b
+        where b.id = t.function_batch_id
+          and b.inbound_message_id = m.id
+    )
+)
 where m.platform = %(platform)s
   and source_ui.platform_user_id = %(platform_user_id)s
   and m.platform_chat_id = %(platform_chat_id)s
   and m.provider_dedupe_key = %(provider_dedupe_key)s
+order by t.function_call_index asc nulls first, t.id asc
 limit 1
 """
 
@@ -705,6 +757,9 @@ from user_identities request_ui
 join transactions t on t.user_id = request_ui.user_id
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 join user_identities fallback_ui on fallback_ui.id = request_ui.id
 where request_ui.platform = %(platform)s
   and request_ui.platform_user_id = %(platform_user_id)s
@@ -721,6 +776,9 @@ select
 from transactions t
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 left join lateral (
     select *
     from user_identities
@@ -741,6 +799,9 @@ from user_identities request_ui
 join transactions t on t.user_id = request_ui.user_id
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 join user_identities fallback_ui on fallback_ui.id = request_ui.id
 where request_ui.platform = %(platform)s
   and request_ui.platform_user_id = %(platform_user_id)s
@@ -759,6 +820,9 @@ from user_identities request_ui
 join transactions t on t.user_id = request_ui.user_id
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 join user_identities fallback_ui on fallback_ui.id = request_ui.id
 where request_ui.platform = %(platform)s
   and request_ui.platform_user_id = %(platform_user_id)s
@@ -769,6 +833,32 @@ order by t.transaction_date asc, t.created_at asc, t.id asc
 """
 
 
+SELECT_RECENT_TRANSACTIONS_SQL = f"""
+-- postgres_repository.select_recent_transactions
+select
+{RECORD_SELECT_COLUMNS_WITH_IDENTITY_FALLBACK}
+from user_identities request_ui
+join transactions t on t.user_id = request_ui.user_id
+left join inbound_messages m on m.id = t.created_from_message_id
+left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
+join user_identities fallback_ui on fallback_ui.id = request_ui.id
+where request_ui.platform = %(platform)s
+  and request_ui.platform_user_id = %(platform_user_id)s
+  and t.transaction_type = 'expense'
+  and (%(category)s::text is null or t.category = %(category)s)
+  and (
+      %(merchant)s::text is null
+      or lower(coalesce(t.merchant, '')) like
+          '%%' || lower(%(merchant)s) || '%%'
+  )
+order by t.transaction_date desc, t.created_at desc, t.id desc
+limit %(limit)s
+"""
+
+
 SELECT_ALL_TRANSACTIONS_SQL = f"""
 -- postgres_repository.select_all_transactions
 select
@@ -776,6 +866,9 @@ select
 from transactions t
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 left join lateral (
     select *
     from user_identities
@@ -806,6 +899,9 @@ select
 from updated t
 left join inbound_messages m on m.id = t.created_from_message_id
 left join user_identities source_ui on source_ui.id = m.identity_id
+left join function_call_batches fcb on fcb.id = t.function_batch_id
+left join inbound_messages batch_m on batch_m.id = fcb.inbound_message_id
+left join user_identities batch_ui on batch_ui.id = batch_m.identity_id
 left join lateral (
     select *
     from user_identities
