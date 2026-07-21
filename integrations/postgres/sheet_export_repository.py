@@ -216,14 +216,14 @@ from transaction_events e
 join transactions t on t.id = e.transaction_id
 where t.user_id = %(user_id)s
   and (
-      %(last_synced_event_id)s is null
+      %(last_synced_event_id)s::uuid is null
       or (
           e.created_at,
           e.id
       ) > (
           select cursor_event.created_at, cursor_event.id
           from transaction_events cursor_event
-          where cursor_event.id = %(last_synced_event_id)s
+          where cursor_event.id = %(last_synced_event_id)s::uuid
       )
   )
 order by e.created_at asc, e.id asc
