@@ -7,46 +7,53 @@ as the project advances.
 ## Current State
 
 - PR #53 and Issues #52/#54 are merged and closed.
-- PostgreSQL authority is accepted system intent, while production cutover has
-  not been performed. The deployed production storage setting must not be
-  inferred from merged or reviewed code.
+- PostgreSQL is the deployed production source of truth. Cloud Run revision
+  `expense-agent-00025-wzf` serves 100% of traffic with
+  `STORAGE_BACKEND=postgres`, a Secret Manager `DATABASE_URL`, and an
+  authenticated Cloud SQL attachment.
+- Production uses a cost-prioritized PostgreSQL 16 Cloud SQL Enterprise
+  `db-f1-micro` instance in `asia-southeast1-c`: single-zone, 10 GB SSD with
+  automatic growth, automated backups, and deletion protection.
 - The implementation retains the 17-column `Transactions` worksheet as the
-  temporary rollback backend and writes the derived 11-column `Ledger`
-  projection from PostgreSQL.
-- Projection deployment is an explicit environment-scoped Cloud Run Job and
-  Cloud Scheduler action; an ordinary merge does not enable production
-  scheduling or perform cutover.
+  temporary rollback backend. PostgreSQL projects six user ledgers into the
+  separate 11-column `Ledger` worksheet; Sheet edits do not flow upstream.
+- The production `expense-agent-sheet-projection` Cloud Run Job runs every five
+  minutes through an enabled Cloud Scheduler trigger. Bot, projection runtime,
+  and scheduler identities are pairwise separate.
 
 ## Active Work
 
-- Issue #55: add secure Cloud SQL attachment support, provision the approved
-  cost-prioritized production database, verify backfill, and perform the
-  explicitly approved PostgreSQL cutover.
+- Issue #55: persist final production cutover evidence and close delivery.
 
 ## Blockers
 
 - No known implementation blocker is open.
-- Production exposure remains intentionally blocked on the verification and
-  approval steps in the [cutover runbook](postgres-backfill-cutover.md).
+- No known production or implementation blocker is open.
 
 ## Open Decisions
 
-- Production cutover is approved for Issue #55 only after its backfill and
-  verification gates pass.
 - When post-cutover evidence is sufficient to remove the temporary Google
-  Sheets runtime rollback path; that cleanup is outside Issues #52 and #54.
+  Sheets runtime rollback path; that cleanup is outside Issue #55.
+- Whether future usage justifies upgrading the cost-prioritized single-zone
+  Cloud SQL instance to regional high availability.
 
 ## Validation State
 
-- Merge commit `b710883` is deployed and healthy in production while retaining
-  the Google Sheets backend.
-- No production cutover or production projection schedule has yet been
-  executed. Issue #55 must record fresh verification evidence before either.
+- Backfill imported 113 of 113 source transactions, and independent verification
+  matched 113 Google Sheets rows to 113 PostgreSQL rows.
+- PostgreSQL contains 113 transactions and 113 audit events. Six exports are
+  enabled with zero errors and zero pending projection events.
+- Cloud Run production health is passing after cutover.
+- Manual and Scheduler-triggered projection Job executions both completed
+  successfully; the Scheduler remains enabled on a five-minute cadence.
+- Pull requests #56 and #57 passed CI, GitGuardian, and material-finding review.
 
 ## Safe Next Actions
 
-1. Merge tested Cloud SQL attachment support without changing the active backend.
-2. Provision the approved single-zone database and isolated runtime identities.
-3. Run migration, dry-run backfill, executed backfill, and verification.
-4. Cut over Cloud Run only after verification passes, then deploy and validate
-   the projection schedule.
+1. Monitor the first normal production create, update, duplicate-delivery, and
+   spending-query traffic against PostgreSQL and its audit events.
+2. Keep the Google Sheets rollback credentials and unchanged `Transactions`
+   worksheet until an explicit stabilization decision.
+3. Investigate any projection `last_error` without moving the cursor manually;
+   the next scheduled run retries pending events.
+4. Reassess Cloud SQL availability and capacity as usage grows.
