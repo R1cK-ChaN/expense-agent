@@ -6,12 +6,12 @@ as the project advances.
 
 ## Current State
 
-- PR #53 and Issues #52/#54 are merged and closed.
+- PRs #60/#61 and Issue #59 are merged and closed.
 - PostgreSQL is the deployed production source of truth. Cloud Run revision
-  `expense-agent-00027-kh2` served 100% of traffic at the latest Issue #59 log
-  inspection with
-  `STORAGE_BACKEND=postgres`, a Secret Manager `DATABASE_URL`, and an
-  authenticated Cloud SQL attachment.
+  `expense-agent-00030-cm9` serves 100% of traffic with
+  `STORAGE_BACKEND=postgres`, `FUNCTION_BATCHES_ENABLED=true`,
+  `AGENT_MODEL=gpt-5.5`, a Secret Manager `DATABASE_URL`, and an authenticated
+  Cloud SQL attachment.
 - Production uses a cost-prioritized PostgreSQL 16 Cloud SQL Enterprise
   `db-f1-micro` instance in `asia-southeast1-c`: single-zone, 10 GB SSD with
   automatic growth, automated backups, and deletion protection.
@@ -24,12 +24,8 @@ as the project advances.
 
 ## Active Work
 
-- Issue #59: replace parser-only interpretation with one-shot function-call
-  batches, deterministic backend replies, GPT-5.5, and deterministic statistics.
-- The GPT-5.5 Responses selector, deterministic executor/statistics/replies,
-  PostgreSQL batch idempotency, and bounded pending request are implemented
-  behind `FUNCTION_BATCHES_ENABLED=false`. On 2026-07-21 the owner explicitly
-  approved skipping staging and validating the new path directly in production.
+- Observe real production requests through the GPT-5.5 function-batch path and
+  investigate any semantic failure using privacy-safe function outcome logs.
 
 ## Blockers
 
@@ -53,16 +49,19 @@ as the project advances.
 - Manual and Scheduler-triggered projection Job executions both completed
   successfully; the Scheduler remains enabled on a five-minute cadence.
 - Pull requests #56 and #57 passed CI, GitGuardian, and material-finding review.
-- Issue #59 local verification passes 348 tests after final runtime wiring;
-  production release is approved but not yet completed.
+- Issue #59 and follow-up PR #61 pass 348 tests, CI, GitGuardian, and material
+  review. Migration `0004` completed through the one-time production Cloud Run
+  Job execution `expense-agent-migrate-0004-cw7xn`; the Job configuration was
+  removed afterward while execution logs remain available.
+- Production revision `expense-agent-00030-cm9` started cleanly, passed the
+  deployment and independent `/health` checks, and has no startup errors.
 
 ## Safe Next Actions
 
-1. Deploy the merged code to production with function batches disabled, apply
-   migration `0004`, then set `AGENT_MODEL=gpt-5.5` and
-   `FUNCTION_BATCHES_ENABLED=true` before smoking health,
-   create/multi-create/update/replay/pending, and statistics. Disable the flag
-   immediately if a material check fails.
+1. Exercise create/multi-create/update/replay/pending and statistics through a
+   real production IM conversation; do not add fabricated ledger entries solely
+   for smoke testing. Inspect semantic outcome logs after each controlled case.
+   Disable `FUNCTION_BATCHES_ENABLED` immediately if a material check fails.
 2. Keep the Google Sheets rollback credentials and unchanged `Transactions`
    worksheet until an explicit stabilization decision.
 3. Investigate any projection `last_error` without moving the cursor manually;

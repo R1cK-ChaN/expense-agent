@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 
 from app.telegram_webhook import (
@@ -40,6 +42,18 @@ from integrations.postgres.repository import PostgresTransactionRepository
 from integrations.telegram_client import TelegramBotClient
 
 
+def _configure_function_batch_logging() -> None:
+    outcome_logger = logging.getLogger("core.function_batch_handler")
+    outcome_logger.setLevel(logging.INFO)
+    if not outcome_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s %(name)s %(message)s")
+        )
+        outcome_logger.addHandler(handler)
+    outcome_logger.propagate = False
+
+
 def create_app(
     *,
     telegram_reply_client: TelegramReplyClient | None = None,
@@ -50,6 +64,7 @@ def create_app(
     wechat_text_handler: WeChatTextHandler | None = None,
     wechat_location_handler: WeChatLocationHandler | None = None,
 ) -> FastAPI:
+    _configure_function_batch_logging()
     settings = load_settings()
     application = FastAPI(title="Expense Agent")
     if telegram_reply_client is None and settings.telegram_bot_token is not None:
