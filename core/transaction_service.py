@@ -114,6 +114,7 @@ class _ExpenseTotalSummary:
     total: Decimal
     currency: str
     foreign_totals: tuple[tuple[str, Decimal], ...]
+    exchange_rate_dates: tuple[tuple[str, str], ...]
     category_totals: tuple[tuple[str, Decimal], ...]
 
 
@@ -395,7 +396,10 @@ class TransactionService:
             return _format_unsupported_monthly_total_reply(currency)
 
         try:
-            bounds = _query_bounds(query)
+            bounds = _query_bounds(
+                query,
+                current_date=_message_date(message.received_at, self._timezone),
+            )
         except ValueError:
             logger.exception("Invalid expense query date range.")
             return PROCESSING_FAILURE_MESSAGE
@@ -508,6 +512,11 @@ def _format_expense_total_reply(
         lines.append(
             f"外币支出（{len(summary.foreign_totals)} 种）：" + "；".join(foreign_parts)
         )
+        rate_date_parts = [
+            f"{code} {rate_date}"
+            for code, rate_date in summary.exchange_rate_dates
+        ]
+        lines.append("汇率日：" + "；".join(rate_date_parts))
 
     if summary.category_totals:
         lines.append("分类占比：")
@@ -548,7 +557,7 @@ def _message_date(timestamp: datetime, timezone_name: str) -> date:
     return timestamp.astimezone(ZoneInfo(timezone_name)).date()
 
 
-def _query_bounds(query: object) -> _ExpenseQueryBounds:
+def _query_bounds(query: object, *, current_date: date) -> _ExpenseQueryBounds:
     start_date = getattr(query, "start_date", None)
     end_date = getattr(query, "end_date", None)
     if start_date is not None and end_date is not None:
@@ -563,6 +572,8 @@ def _query_bounds(query: object) -> _ExpenseQueryBounds:
         raise ValueError("query has no date bounds")
     month_start = date.fromisoformat(f"{month}-01")
     month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+    if month_start.strftime("%Y-%m") == current_date.strftime("%Y-%m"):
+        month_end = current_date
     return _ExpenseQueryBounds(month_start.isoformat(), month_end.isoformat())
 
 
@@ -574,6 +585,7 @@ def _summarize_expense_records(
 ) -> _ExpenseTotalSummary:
     total = Decimal("0")
     foreign_totals: dict[str, Decimal] = {}
+    exchange_rate_dates: set[tuple[str, str]] = set()
     category_totals: dict[str, Decimal] = {}
     for record in records:
         record_currency = normalize_currency_code(record.currency)
@@ -601,6 +613,7 @@ def _summarize_expense_records(
         foreign_totals[record_currency] = (
             foreign_totals.get(record_currency, Decimal("0")) + record.amount
         )
+        exchange_rate_dates.add((record_currency, conversion.rate_date))
         category_totals[record.category] = (
             category_totals.get(record.category, Decimal("0"))
             + conversion.converted_amount
@@ -610,6 +623,7 @@ def _summarize_expense_records(
         total=total,
         currency=currency,
         foreign_totals=tuple(sorted(foreign_totals.items())),
+        exchange_rate_dates=tuple(sorted(exchange_rate_dates)),
         category_totals=tuple(
             sorted(category_totals.items(), key=lambda item: (-item[1], item[0]))
         ),

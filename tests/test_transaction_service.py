@@ -868,11 +868,13 @@ def test_query_monthly_total_returns_current_user_sgd_total(text: str):
     reply = service.handle_telegram_message(make_message(text=text))
 
     assert reply == (
-        "2026-05-01 至 2026-05-31 支出合计：123.40 SGD\n"
+        "2026-05-01 至 2026-05-20 支出合计：123.40 SGD\n"
         "分类占比：\n"
         "- 餐饮：123.40 SGD（100.00%）"
     )
-    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-05-01", "2026-05-20")
+    ]
     assert repository.appended_records == []
     assert repository.update_calls == []
 
@@ -892,11 +894,13 @@ def test_query_monthly_total_uses_message_timezone_for_current_month():
     )
 
     assert reply == (
-        "2026-05-01 至 2026-05-31 支出合计：8.80 SGD\n"
+        "2026-05-01 支出合计：8.80 SGD\n"
         "分类占比：\n"
         "- 餐饮：8.80 SGD（100.00%）"
     )
-    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-05-01", "2026-05-01")
+    ]
 
 
 def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
@@ -909,11 +913,13 @@ def test_query_monthly_total_defaults_omitted_query_currency_to_sgd():
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == (
-        "2026-05-01 至 2026-05-31 支出合计：11.00 SGD\n"
+        "2026-05-01 至 2026-05-20 支出合计：11.00 SGD\n"
         "分类占比：\n"
         "- 餐饮：11.00 SGD（100.00%）"
     )
-    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-05-01", "2026-05-20")
+    ]
 
 
 def test_query_monthly_total_converts_mixed_currencies_to_sgd():
@@ -955,12 +961,15 @@ def test_query_monthly_total_converts_mixed_currencies_to_sgd():
     reply = service.handle_telegram_message(make_message(text="这个月花了多少？"))
 
     assert reply == (
-        "2026-05-01 至 2026-05-31 支出合计：22.15 SGD\n"
+        "2026-05-01 至 2026-05-20 支出合计：22.15 SGD\n"
         "外币支出（2 种）：30 CNY；5 USD\n"
+        "汇率日：CNY 2026-05-02；USD 2026-05-02\n"
         "分类占比：\n"
         "- 餐饮：22.15 SGD（100.00%）"
     )
-    assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
+    assert repository.list_expense_calls == [
+        ("telegram", "42", "2026-05-01", "2026-05-20")
+    ]
     assert exchange_rate_provider.calls == [
         (Decimal("30"), "CNY", "SGD", "2026-05-02"),
         (Decimal("5"), "USD", "SGD", "2026-05-03"),
@@ -1055,7 +1064,7 @@ def test_query_monthly_total_formats_zero_sgd_total():
 
     reply = service.handle_telegram_message(make_message(text="本月支出多少？"))
 
-    assert reply == "2026-05-01 至 2026-05-31 支出合计：0.00 SGD"
+    assert reply == "2026-05-01 至 2026-05-20 支出合计：0.00 SGD"
     assert repository.list_monthly_calls == [("telegram", "42", "2026-05")]
 
 

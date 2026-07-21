@@ -118,7 +118,8 @@ Expense total query fields:
 - `currency`: reporting currency, or null to use the configured local currency.
 
 Legacy parser responses containing `month` as `YYYY-MM` remain accepted and
-are expanded to the full calendar month.
+are expanded to the full calendar month, except that the current month ends on
+the requesting message's date so future-dated rows are not included.
 
 Invariants:
 
@@ -203,7 +204,8 @@ Invariants:
 - Query requests must not append, update, or delete transaction rows.
 - Query date ranges must be bounded before storage access.
 - Query results must be scoped to the requesting user or chat policy defined by the implementation issue.
-- Monthly total queries return the configured default-currency total for the current month.
+- Total queries return the configured default-currency total for the requested
+  inclusive date range; legacy current-month queries end on the request date.
 - Non-default-currency expenses are converted with transaction-date daily reference rates for reporting only.
 - When the exact transaction date has no rate, the latest previous available rate may be used and the rate date must be visible in the reply context.
 - Original stored `amount` and `currency` must not be overwritten by report conversion.
