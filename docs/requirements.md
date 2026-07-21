@@ -169,7 +169,7 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 
 ### Expense Creation
 
-- Given a message with a positive amount and expense description, when the bot handles it, then one transaction is appended to Google Sheets.
+- Given a message with a positive amount and expense description, when the bot handles it, then one transaction and its creation event are committed in PostgreSQL before confirmation.
 - Given a message without an explicit currency, when the transaction is valid, then the configured default currency is stored.
 - Given a message without an explicit date, when the transaction is valid, then the Telegram message date is stored in the configured timezone.
 - Given a message with a supported category synonym, when the parser returns a transaction, then the stored category uses the normalized category value.

@@ -2,7 +2,11 @@
 
 ## Overview
 
-The domain model separates user intent, parsed data, validation, source metadata, and persistence. Telegram and WeChat messages are provider envelopes, parser results describe the user's intent, domain validation decides whether the intent is safe to execute, and Google Sheets stores accepted transactions.
+The domain model separates user intent, parsed data, validation, source metadata,
+and persistence. Telegram and WeChat messages are provider envelopes, parser
+results describe the user's intent, domain validation decides whether the intent
+is safe to execute, PostgreSQL owns accepted transaction state, and Google Sheets
+is a derived user-visible projection.
 
 ## IM Source Metadata
 

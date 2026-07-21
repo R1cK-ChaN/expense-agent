@@ -115,7 +115,7 @@ Manual review checklist for this baseline:
 
 - `docs/requirements.md` identifies supported user stories, out-of-scope features, defaults, categories, acceptance cases, and future MVP issue breakdown.
 - `docs/domain-model.md` defines transaction fields, Telegram metadata, parser results, update requests, query requests, supported categories, storage row shape, and validation invariants.
-- `docs/architecture.md` states Telegram is the interface, backend services own orchestration, the LLM is parser-only, and Google Sheets is storage.
+- `docs/architecture.md` states the IM adapters are interfaces, backend services own orchestration, the LLM is parser-only, PostgreSQL is authoritative, and Google Sheets is a projection.
 - `docs/testing-strategy.md` explains Red, Green, Refactor, Verify, expected test types, and the current docs verification command.
 
 ## Issue-to-Test Mapping

@@ -1,27 +1,22 @@
-# PostgreSQL Backfill And Verification (Offline)
+# PostgreSQL Backfill, Verification, And Cutover
 
-> Historical migration runbook: PostgreSQL is no longer a selectable ledger
-> backend for the business bot. Google Sheets is the canonical source of truth.
-> The PostgreSQL commands below are retained only for offline migration,
-> verification, and export operations. They do not change the bot's source of
-> truth or authorize a production cutover.
-
-This runbook imports existing Google Sheets transaction rows into an offline
-PostgreSQL database and verifies the resulting copy. The migration scripts
-default to read-only dry-run behavior; writing to PostgreSQL requires the
-explicit `--execute` flag. Google Sheets remains the canonical ledger before,
-during, and after these commands.
+PostgreSQL is the authoritative ledger target. This runbook imports the legacy
+Google Sheets ledger, verifies the resulting database state, enables PostgreSQL
+in staging, and defines the separate production cutover and rollback decisions.
+The migration scripts default to read-only dry-run behavior; writing to
+PostgreSQL requires the explicit `--execute` flag. Running a backfill or passing
+verification does not by itself authorize production exposure.
 
 ## Preconditions
 
 - PostgreSQL migrations have been applied through
   `0002_add_transaction_external_id.sql`.
 - `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and `DATABASE_URL` point to
-  the explicitly approved source and offline verification target.
+  the explicitly approved source and target environment.
 - `DEFAULT_TIMEZONE` matches the source ledger, currently `Asia/Singapore`.
 - Google Sheets has the `Transactions` worksheet and current headers from
   `docs/google-sheets-template.md`.
-- No production bot configuration is changed by this workflow.
+- No production bot configuration changes without explicit approval.
 
 Validate local migration files:
 
@@ -63,7 +58,7 @@ creates or reuses the internal user and provider identity, inserts an inbound
 message idempotency row, inserts the transaction, and appends a `created`
 transaction event. Re-running the command skips equivalent existing rows.
 
-Blocking preflight issues must be resolved before executing the offline import:
+Blocking preflight issues must be resolved before executing the import:
 
 - Duplicate transaction IDs.
 - Duplicate source message tuples.
@@ -89,21 +84,36 @@ The report compares Google Sheets against PostgreSQL for:
 - Currency, category, and merchant counts.
 - Latest expense transaction per source user.
 
-Treat a failing report as an invalid offline copy: fix the data or script issue,
-rerun the backfill, and rerun verification. It has no effect on the canonical
-Google Sheets ledger.
+Treat a failing report as an invalid copy: fix the data or script issue, rerun
+the backfill, and rerun verification. Keep runtime on its current backend.
 
-## Retired Production Cutover
+## Staging Validation
 
-The former `STORAGE_BACKEND=postgres` Cloud Run cutover and configuration-based
-rollback procedure is retired. `app/main.py` always builds the Google Sheets
-repository for bot traffic, and the deploy script requires Google Sheets
-configuration. Do not set `STORAGE_BACKEND=postgres` expecting it to redirect
-runtime reads or writes.
+1. Deploy with `STORAGE_BACKEND=postgres` and a staging `DATABASE_URL`.
+2. Create one controlled expense and confirm the transaction and `created`
+   event committed before the reply.
+3. Update it and confirm the current row plus `updated` event.
+4. Replay the provider message and confirm no duplicate transaction or event.
+5. Query the containing date range and verify totals, rate dates, and category
+   percentages.
+6. Configure `google_sheet_exports`, run
+   `scripts/sync_postgres_to_google_sheets.py`, and verify the projected row.
+7. Simulate a Sheet failure, verify `last_error` and the unchanged cursor, then
+   retry successfully.
 
-If PostgreSQL runtime ownership is proposed again, treat it as a new
-architecture and release change: update application wiring, compatibility
-tests, current-state documentation, post-deploy validation, and rollback plans
-in a separately approved issue. An offline import or clean verification report
-is evidence about data compatibility only; it is not a release gate or cutover
-authorization.
+## Production Cutover
+
+Production cutover requires explicit approval after the backfill verification
+and staging validation above succeed. Set `STORAGE_BACKEND=postgres`, provide
+`DATABASE_URL`, deploy, and repeat the controlled create/update/replay/query and
+projection checks. A successful deploy or health check alone is not approval to
+expose PostgreSQL-backed behavior.
+
+## Rollback
+
+Restore `STORAGE_BACKEND=google_sheets` with the legacy Sheet credentials and
+stop the projection job so there is only one Sheet writer. Before resuming
+normal traffic, identify PostgreSQL transactions committed during the cutover
+window and reconcile them into the Sheet without changing their stable IDs.
+Preserve PostgreSQL and its audit events for investigation; do not run a
+destructive migration.

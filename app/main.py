@@ -10,7 +10,12 @@ from app.wechat_webhook import (
     WeChatTextHandler,
     create_wechat_webhook_router,
 )
-from config.settings import Settings, load_settings
+from config.settings import (
+    STORAGE_BACKEND_GOOGLE_SHEETS,
+    STORAGE_BACKEND_POSTGRES,
+    Settings,
+    load_settings,
+)
 from core.intent_parser import IntentParser
 from core.transaction_service import TransactionService
 from integrations.exchange_rates import FrankfurterExchangeRateProvider
@@ -19,6 +24,7 @@ from integrations.google_sheets.repository import (
     build_google_sheets_values_client,
 )
 from integrations.llm_client import OpenAICompatibleLLMClient
+from integrations.postgres.repository import PostgresTransactionRepository
 from integrations.telegram_client import TelegramBotClient
 
 
@@ -112,23 +118,32 @@ def _parser_configured(settings: Settings) -> bool:
 
 def _build_transaction_repository(
     settings: Settings,
-) -> GoogleSheetsTransactionRepository | None:
-    """Build the bot's canonical, user-visible Google Sheets ledger.
+) -> GoogleSheetsTransactionRepository | PostgresTransactionRepository | None:
+    """Build the selected authoritative ledger for bot reads and writes."""
 
-    PostgreSQL remains available to migration and export tooling, but it is not
-    a selectable source of truth for bot recording or spending queries.
-    """
+    if settings.storage_backend == STORAGE_BACKEND_GOOGLE_SHEETS:
+        if not settings.google_service_account_json or not settings.google_sheet_id:
+            return None
+        sheets_client = build_google_sheets_values_client(
+            settings.google_service_account_json
+        )
+        return GoogleSheetsTransactionRepository(
+            sheet_id=settings.google_sheet_id,
+            sheets_client=sheets_client,
+            timezone=settings.default_timezone,
+        )
 
-    if not settings.google_service_account_json or not settings.google_sheet_id:
-        return None
-    sheets_client = build_google_sheets_values_client(
-        settings.google_service_account_json
-    )
-    return GoogleSheetsTransactionRepository(
-        sheet_id=settings.google_sheet_id,
-        sheets_client=sheets_client,
-        timezone=settings.default_timezone,
-    )
+    if settings.storage_backend == STORAGE_BACKEND_POSTGRES:
+        if not settings.database_url:
+            return None
+        return PostgresTransactionRepository(
+            database_url=settings.database_url,
+            timezone=settings.default_timezone,
+        )
+
+    # Unsupported values disable transaction handling while preserving health.
+    # Deployment validation rejects unsupported production configuration.
+    return None
 
 
 app = create_app()

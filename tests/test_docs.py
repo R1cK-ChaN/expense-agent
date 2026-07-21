@@ -20,16 +20,17 @@ def test_domain_model_documents_generic_source_metadata():
     assert "`source_user_id`" in domain_model
 
 
-def test_postgres_backfill_runbook_documents_offline_boundary():
+def test_postgres_backfill_runbook_documents_cutover_boundary():
     runbook = (ROOT / "docs" / "postgres-backfill-cutover.md").read_text()
 
     assert "backfill_google_sheets_to_postgres.py" in runbook
     assert "verify_postgres_backfill.py" in runbook
     assert "--execute" in runbook
     assert "STORAGE_BACKEND=postgres" in runbook
-    assert "Google Sheets remains the canonical ledger" in runbook
-    assert "Retired Production Cutover" in runbook
-    assert "not a release gate or cutover" in runbook
+    assert "PostgreSQL is the authoritative ledger" in runbook
+    assert "Production Cutover" in runbook
+    assert "explicit approval" in runbook
+    assert "Rollback" in runbook
 
 
 def test_architecture_documents_database_to_sheets_export_projection():

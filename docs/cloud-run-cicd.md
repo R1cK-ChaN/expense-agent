@@ -30,8 +30,8 @@ Configure these as repository variables or production environment variables:
 | `CLOUD_RUN_REGION` | Cloud Run and Artifact Registry region, for example `asia-southeast1`. |
 | `CLOUD_RUN_SERVICE` | Cloud Run service name, for example `expense-agent`. |
 | `ARTIFACT_REGISTRY_REPOSITORY` | Docker Artifact Registry repository name. |
-| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL` and `GOOGLE_SHEET_ID`. |
-| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include the parser and IM-provider secrets plus `GOOGLE_SERVICE_ACCOUNT_JSON`. |
+| `CLOUD_RUN_ENV_VARS` | Comma-separated non-secret runtime config passed to `--update-env-vars`. Must include `PARSER_MODEL`; use `STORAGE_BACKEND=postgres` in staging and only after approved production cutover. |
+| `CLOUD_RUN_SECRET_MAPPINGS` | Comma-separated Secret Manager mappings passed to `--update-secrets`. Must include parser and IM-provider secrets plus `DATABASE_URL` for PostgreSQL or `GOOGLE_SERVICE_ACCOUNT_JSON` for the rollback backend. |
 
 Optional variables:
 
@@ -43,18 +43,18 @@ Optional variables:
 Example non-secret config:
 
 ```text
-SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,GOOGLE_SHEET_ID=<sheet-id>,GOOGLE_WORKSHEET_NAME=Transactions
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres
 ```
 
 Example Secret Manager mappings:
 
 ```text
-TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,GOOGLE_SERVICE_ACCOUNT_JSON=google-service-account-json:latest
+TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,DATABASE_URL=database-url:latest
 ```
 
-The business bot always uses Google Sheets as its ledger. `DATABASE_URL` is
-reserved for offline migration, verification, and export commands and does not
-change the bot's source of truth.
+The deployment script validates credentials for the selected backend.
+Production must retain its current setting until backfill verification and the
+staging smoke path succeed; a successful deploy does not authorize cutover.
 
 ## GCP Setup
 

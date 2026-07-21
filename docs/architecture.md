@@ -7,11 +7,11 @@ Expense Agent has six primary boundaries:
 - Telegram and WeChat Official Account are inbound and reply IM interfaces.
 - Backend services own orchestration, validation, persistence decisions, and replies.
 - The LLM is parser-only and returns structured intent.
-- Google Sheets is the canonical, user-visible ledger for bot runtime traffic.
-- PostgreSQL repository, backfill, verification, and export modules are retained
-  for offline tooling; they are not selectable as the bot's runtime ledger.
-- The database-to-Sheets export path is an operator-run offline tool, not a
-  second source of truth or part of the bot request path.
+- PostgreSQL is the authoritative ledger target for bot runtime traffic.
+- Google Sheets is a replaceable user-visible projection; its legacy repository
+  remains selectable only as the temporary migration and rollback path.
+- The database-to-Sheets export path is asynchronous and one-way, not a second
+  source of truth or part of the bot request transaction.
 - The exchange-rate provider supplies deterministic historical rates for reporting.
 
 The backend is the only component allowed to decide whether data is valid, whether storage should change, and what IM reply should be sent.
@@ -27,7 +27,9 @@ The backend is the only component allowed to decide whether data is valid, wheth
 5. The parser returns a structured parser result.
 6. The application service validates the parser result against the domain model.
 7. Before append, the application service checks the user's latest recent expense for an exact currency-correction retry.
-8. The Google Sheets repository appends one transaction row when validation passes and no duplicate exists, or updates the recent row when the retry guard matches.
+8. The selected authoritative repository commits the transaction and audit
+   event when validation passes and no duplicate exists, or atomically updates
+   the recent transaction and appends an update event when the retry guard matches.
 9. The application service formats a confirmation or clarification reply.
 10. The platform adapter sends or returns the reply to the originating conversation.
 
@@ -45,7 +47,8 @@ The backend is the only component allowed to decide whether data is valid, wheth
 1. Telegram or WeChat receives a query request.
 2. The parser identifies `query_monthly_total` intent and inclusive start/end dates.
 3. The application service validates and bounds the query.
-4. The repository reads matching rows from Google Sheets.
+4. The repository reads matching rows from the selected authoritative ledger;
+   after cutover this is PostgreSQL.
 5. The application service converts non-default-currency rows with transaction-date exchange rates.
 6. The application service formats the local-currency total, original foreign-currency subtotals, actual exchange-rate dates, and local-currency category amounts and percentages.
 7. The platform adapter replies without mutating storage.
@@ -155,12 +158,11 @@ Duplicate provider retries return the stored transaction confirmation without a
 second append.
 
 `app/main.py` wires this service as the default Telegram and WeChat text
-handler when parser credentials, parser model, Google service-account JSON,
-and Sheet ID are configured. The bot always constructs the Google Sheets
-repository; legacy `STORAGE_BACKEND` and `DATABASE_URL` settings do not override
-the runtime ledger. Without the required Google Sheets settings, the app skips
-transaction handling and still imports and serves health checks without
-external credentials.
+handler when parser credentials, parser model, and the selected repository's
+credentials are configured. `STORAGE_BACKEND=postgres` requires `DATABASE_URL`;
+`STORAGE_BACKEND=google_sheets` requires Google service-account JSON and Sheet
+ID. Missing backend configuration disables transaction handling while preserving
+the health endpoint.
 
 ### Domain Validation
 
@@ -232,7 +234,7 @@ Does not own:
 - IM reply formatting.
 - Domain validation beyond defensive repository checks.
 
-The repository implementation lives in `integrations/google_sheets/repository.py`.
+The legacy rollback repository implementation lives in `integrations/google_sheets/repository.py`.
 Application services depend on `GoogleSheetsTransactionRepository` and its
 `SheetsValuesClient` boundary rather than calling Google API resources directly.
 The concrete `GoogleSheetsValuesClient` wraps the Sheets `spreadsheets().values()`
@@ -263,8 +265,8 @@ Does not own:
 
 The implementation lives in `integrations/postgres/repository.py`. It keeps SQL
 inside the PostgreSQL integration module and implements the transaction
-repository behaviors needed by offline migration and verification commands.
-`app/main.py` does not wire it into bot runtime traffic.
+repository behaviors needed by runtime traffic, migration, and verification
+commands. `app/main.py` wires it when `STORAGE_BACKEND=postgres`.
 
 ### PostgreSQL Backfill And Verification Scripts
 
@@ -279,15 +281,14 @@ Owns:
   `--execute` is explicitly supplied.
 - Comparing Google Sheets and PostgreSQL row counts, row values, monthly totals,
   currency/category/merchant counts, and latest expense records.
-- Preserving the retired production-cutover procedure as clearly labeled
-  historical context.
+- Reporting verification evidence required before production cutover.
 
 Does not own:
 
 - Parser behavior.
 - Runtime request handling.
-- Production bot configuration changes.
-- Changing Google Sheets as the canonical ledger.
+- Production bot configuration changes without explicit approval.
+- Continuous or bidirectional synchronization.
 
 The backfill command lives in
 `scripts/backfill_google_sheets_to_postgres.py` and defaults to dry-run mode.
@@ -348,11 +349,12 @@ currency are never overwritten.
 - Raw IM text is owned by the provider adapter until it is handed to the application service.
 - Parsed intent is owned by the parser port as an untrusted proposal.
 - Validated transaction state is owned by the application service and persisted through the repository.
-- Google Sheets owns the durable, canonical bot ledger.
-- PostgreSQL stores offline migration, verification, and export data only; it
-  does not own production bot transactions.
-- Database-to-Sheets export tooling must not be interpreted as changing ledger
-  ownership or enabling PostgreSQL runtime selection.
+- PostgreSQL owns authoritative transaction state, inbound-message idempotency,
+  and append-only audit events after cutover.
+- Google Sheets owns no authoritative transaction state; it is either the
+  temporary rollback backend before stabilization or a derived projection.
+- Database-to-Sheets export failures never roll back committed PostgreSQL writes,
+  and manual Sheet edits never flow back into PostgreSQL.
 - Exchange-rate conversions are transient reporting data owned by the application service reply path.
 
 Parser results should be treated as untrusted input. The backend must validate every field before writing to storage.
@@ -387,10 +389,9 @@ Required configuration for transaction handling:
 - Telegram webhook secret token.
 - WeChat Official Account token for callback signature verification.
 - Parser provider credentials and model identifier.
-- Google Sheets credentials, Sheet ID, and worksheet name.
-- For optional offline PostgreSQL commands, `DATABASE_URL` in the operator's
-  environment; it is not required by the deployed bot.
-- For optional `sync_postgres_to_google_sheets.py` runs, a Google service
+- `STORAGE_BACKEND`, defaulting to `google_sheets` until explicit production cutover.
+- `DATABASE_URL` when `STORAGE_BACKEND=postgres` or when running database tools.
+- For `sync_postgres_to_google_sheets.py` runs, a Google service
   account JSON plus one
   enabled `google_sheet_exports` row per user that should receive a Sheets
   ledger projection.
@@ -447,7 +448,7 @@ The Google Sheets repository contract is covered with an in-memory Sheets client
 so duplicate lookup, latest lookup, update, monthly sum, schema validation, and
 provider failure mapping can be tested without real credentials.
 
-The offline PostgreSQL repository contract is covered with an in-memory
+The PostgreSQL repository contract is covered with an in-memory
 psycopg-like connection so atomic create, idempotency lookup, latest lookup,
 update events, monthly queries, schema expectations, and repository failure
 mapping can be tested without real database credentials.
@@ -465,7 +466,6 @@ The create-expense application service contract is covered with fake parser and
 repository tests for successful appends, configured defaults, relative dates,
 missing amount, duplicate provider retries, low-confidence parser output,
 unknown intent, parser failure, and Google Sheets write failure. App bootstrap
-tests cover Google Sheets runtime wiring from webhook message to repository
-append and Telegram reply, verify that legacy PostgreSQL settings cannot
-override the Sheets ledger, and preserve the safe health-only fallback when
-required Google Sheets configuration is missing.
+tests cover both temporary Google Sheets wiring and PostgreSQL runtime wiring
+from webhook message to repository append and Telegram reply, plus the safe
+health-only fallback when the selected backend configuration is missing.

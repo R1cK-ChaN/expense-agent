@@ -2,10 +2,9 @@
 
 ## Purpose
 
-This document describes the implemented PostgreSQL schema retained for offline
-migration, verification, and export tooling. Google Sheets is the canonical bot
-ledger; the deployed application does not select PostgreSQL as its runtime
-repository.
+This document describes the PostgreSQL authoritative ledger schema used by
+runtime traffic after cutover and by migration, verification, and projection
+tooling.
 
 The goal is to support:
 
@@ -16,9 +15,9 @@ The goal is to support:
 - WeChat text, voice, location, and event message routing.
 - Bounded historical context for reporting and LLM-assisted analysis.
 
-Within offline PostgreSQL tooling, the database owns the imported relational
-state. The backend owns business rules. The LLM must not query the database
-directly or decide persistence.
+PostgreSQL owns committed relational transaction state and audit evidence. The
+backend owns business rules. The LLM must not query the database directly or
+decide persistence.
 
 ## Design Principles
 
@@ -280,8 +279,7 @@ create index idx_google_sheet_exports_enabled
     where enabled = true;
 ```
 
-These indexes cover the retained offline repository contracts and possible
-future relational product paths:
+These indexes cover the authoritative repository contracts:
 
 - Duplicate webhook delivery lookup.
 - Latest expense lookup for `update_recent_expense`.
@@ -292,8 +290,8 @@ future relational product paths:
 
 ## Repository Mapping
 
-The PostgreSQL repository implements these behaviors for offline commands and
-contract verification:
+The PostgreSQL repository implements these behaviors for runtime traffic,
+migration commands, and contract verification:
 
 - `find_by_source_message`: read `inbound_messages` by unique provider tuple and
   join to any created transaction. For providers without stable message IDs,
@@ -314,7 +312,8 @@ contract verification:
 - `list_monthly_expenses`: query `transactions` by `user_id` and date range.
 
 The implementation keeps the domain-facing `TransactionRecord` shape and hides
-these joins inside the repository. It is not wired by `app/main.py`.
+these joins inside the repository. `app/main.py` wires it when
+`STORAGE_BACKEND=postgres`.
 
 ## LLM Context Boundary
 
@@ -354,9 +353,10 @@ Suggested migration path:
    provider message metadata is unavailable.
 5. Verify row counts, monthly totals, currencies, categories, merchants, and
    latest-transaction behavior.
-6. Keep the imported PostgreSQL data isolated from bot runtime traffic.
-7. Use verification or export commands explicitly; importing rows does not
-   change ledger ownership.
+6. Keep production runtime on its current backend until verification succeeds
+   and cutover is explicitly approved.
+7. Set `STORAGE_BACKEND=postgres` only for the approved environment; importing
+   rows alone does not change ledger ownership.
 
 ## Deliberately Out Of Scope For V1
 
@@ -369,5 +369,5 @@ Suggested migration path:
 - Hard deletion of financial records.
 
 These can be added later if product requirements justify them. The current
-schema supports offline identity, idempotency, transaction-state, and audit
-verification without becoming the production bot ledger.
+schema supports authoritative identity, idempotency, transaction state, and
+audit verification.

@@ -156,10 +156,10 @@ def test_spending_query_reads_google_sheet_without_writing(monkeypatch):
     assert sheets_client.update_calls == []
 
 
-def test_postgres_setting_cannot_override_google_sheet_ledger(monkeypatch):
+def test_configured_app_wires_postgres_as_authoritative_ledger(monkeypatch):
     from app import main as app_main
 
-    sheets_client = InMemorySheetsClient()
+    repositories: list[FakePostgresTransactionRepository] = []
     reply_client = FakeTelegramReplyClient()
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
@@ -167,8 +167,6 @@ def test_postgres_setting_cannot_override_google_sheet_ledger(monkeypatch):
     monkeypatch.setenv("PARSER_MODEL", "parser-model")
     monkeypatch.setenv("STORAGE_BACKEND", "postgres")
     monkeypatch.setenv("DATABASE_URL", "postgres://user:password@localhost/db")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
-    monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet-1")
     monkeypatch.setattr(
         app_main,
         "OpenAICompatibleLLMClient",
@@ -177,8 +175,19 @@ def test_postgres_setting_cannot_override_google_sheet_ledger(monkeypatch):
     )
     monkeypatch.setattr(
         app_main,
+        "PostgresTransactionRepository",
+        lambda **kwargs: repositories.append(
+            FakePostgresTransactionRepository(**kwargs)
+        )
+        or repositories[-1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_main,
         "build_google_sheets_values_client",
-        lambda service_account_json: sheets_client,
+        lambda service_account_json: (_ for _ in ()).throw(
+            AssertionError("Google Sheets must not be used by PostgreSQL runtime")
+        ),
         raising=False,
     )
 
@@ -207,8 +216,61 @@ def test_postgres_setting_cannot_override_google_sheet_ledger(monkeypatch):
             "reply_to_message_id": "9001",
         }
     ]
-    assert len(sheets_client.rows) == 2
-    assert sheets_client.rows[1][0]
+    assert len(repositories) == 1
+    assert repositories[0].kwargs == {
+        "database_url": "postgres://user:password@localhost/db",
+        "timezone": "Asia/Singapore",
+    }
+    assert len(repositories[0].records) == 1
+    assert repositories[0].records[0].source_message_id == "9001"
+
+
+def test_postgres_backend_without_database_url_preserves_health(monkeypatch):
+    from app import main as app_main
+
+    reply_client = FakeTelegramReplyClient()
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
+    monkeypatch.setenv("PARSER_API_KEY", "parser-secret")
+    monkeypatch.setenv("PARSER_MODEL", "parser-model")
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        app_main,
+        "PostgresTransactionRepository",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("PostgreSQL repository should not be built")
+        ),
+        raising=False,
+    )
+
+    app = app_main.create_app(telegram_reply_client=reply_client)
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 200
+    response = client.post(
+        "/telegram/webhook",
+        json={
+            "update_id": 1000,
+            "message": {
+                "message_id": 9001,
+                "date": 1779251400,
+                "chat": {"id": 12345, "type": "private"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Ada"},
+                "text": "午饭 12.5 麦当劳",
+            },
+        },
+        headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
+    )
+
+    assert response.status_code == 200
+    assert reply_client.sent_messages == [
+        {
+            "chat_id": "12345",
+            "text": DEFAULT_TEXT_MESSAGE_REPLY,
+            "reply_to_message_id": "9001",
+        }
+    ]
 
 
 def test_missing_google_sheet_settings_preserve_health(monkeypatch):
@@ -362,6 +424,34 @@ class InMemorySheetsClient:
     ) -> None:
         self.update_calls.append(values)
         raise AssertionError("update_values should not be called")
+
+
+class FakePostgresTransactionRepository:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.records: list[object] = []
+
+    def find_by_source_message(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+        chat_id: str,
+        message_id: str,
+    ) -> None:
+        return None
+
+    def get_latest_transaction(
+        self,
+        *,
+        source_platform: str,
+        user_id: str,
+    ) -> None:
+        return None
+
+    def append_transaction(self, record: object) -> object:
+        self.records.append(record)
+        return record
 
 
 class FakeTelegramReplyClient:

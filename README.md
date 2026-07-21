@@ -3,10 +3,10 @@
 Telegram Expense Agent MVP.
 
 Users send natural-language expense messages to a Telegram bot. The backend
-parses, validates, stores transactions in the canonical Google Sheets ledger,
-and replies with a confirmation. PostgreSQL is not selectable for bot runtime
-traffic; its integration remains available only to offline migration,
-verification, and export tooling.
+parses, validates, stores transactions in an authoritative ledger, and replies
+with a confirmation. PostgreSQL is the authoritative ledger target;
+Google Sheets remains available as the temporary rollback backend and as a
+replaceable user-visible projection during cutover.
 
 Development follows the GitHub issues in this repository and uses TDD for implementation slices.
 
@@ -35,14 +35,14 @@ uvicorn app.main:app --reload
 Copy `.env.example` for local configuration. The health endpoint imports and
 runs without real external credentials.
 
-The bot uses Google Sheets as its canonical ledger. Configure
-`GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SHEET_ID`; spending queries read the
-`Transactions` worksheet without writing to it, while new expenses append one
-row. PostgreSQL remains available only to migration, verification, and export
-tooling. Google Sheets setup is documented in `docs/google-sheets-template.md`.
-The offline Google Sheets to PostgreSQL backfill and verification tooling is
-documented in `docs/postgres-backfill-cutover.md`; its former production
-cutover procedure is retained only as historical context.
+Set `STORAGE_BACKEND=postgres` with `DATABASE_URL` to make runtime reads and
+writes use PostgreSQL. Keep `STORAGE_BACKEND=google_sheets` with
+`GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SHEET_ID` only for the pre-cutover or
+rollback runtime path. PostgreSQL-to-Sheets projection uses
+`scripts/sync_postgres_to_google_sheets.py`; Sheet edits are never imported as
+runtime commands. Google Sheets setup is documented in
+`docs/google-sheets-template.md`, and the backfill, verification, cutover, and
+rollback procedure is in `docs/postgres-backfill-cutover.md`.
 
 ## Deployment
 
