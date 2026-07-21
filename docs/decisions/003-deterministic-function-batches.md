@@ -44,5 +44,6 @@ untrusted inputs to backend validation.
 - One message can create multiple expenses or combine writes with statistics.
 - Delete and bulk-destructive functions are absent from the exposed catalog.
 - Batch, call-index, result, and reply persistence add schema and recovery state.
-- The legacy parser path remains available during staged integration; production
-  exposure requires explicit validation and approval.
+- The legacy parser path remains available during integration; production
+  exposure requires explicit validation and approval. The owner approved direct
+  production validation without staging for the 2026-07-21 release.

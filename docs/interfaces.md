@@ -37,7 +37,9 @@ owning documents linked below.
   untrusted until backend validation succeeds.
 - Runtime: `FUNCTION_BATCHES_ENABLED=true` selects this path only with
   PostgreSQL. It uses the Responses API and `AGENT_MODEL=gpt-5.5`; the default
-  remains disabled until staging validation and explicit production exposure.
+  remains disabled until explicit production exposure. The normal release path
+  validates in staging first; direct production validation was explicitly
+  approved for the 2026-07-21 release.
 - Detail: [Domain Model](domain-model.md#canonical-language) and
   [Architecture](architecture.md#function-selection-transition).
 

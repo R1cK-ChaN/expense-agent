@@ -52,8 +52,8 @@ rollback procedure is in `docs/postgres-backfill-cutover.md`.
 
 The deterministic one-shot function runtime is enabled separately with
 `FUNCTION_BATCHES_ENABLED=true` and `AGENT_MODEL=gpt-5.5`. It requires
-PostgreSQL and migration `0004`; keep it disabled in production until the
-staging smoke plan in `docs/cloud-run-cicd.md` passes.
+PostgreSQL and migration `0004`. Production exposure requires an explicit
+release decision and the smoke/rollback procedure in `docs/cloud-run-cicd.md`.
 
 ## Deployment
 

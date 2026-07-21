@@ -28,9 +28,8 @@ as the project advances.
   batches, deterministic backend replies, GPT-5.5, and deterministic statistics.
 - The GPT-5.5 Responses selector, deterministic executor/statistics/replies,
   PostgreSQL batch idempotency, and bounded pending request are implemented
-  behind `FUNCTION_BATCHES_ENABLED=false`. Production still uses the existing
-  parser-only runtime until migration and staging smokes pass and exposure is
-  explicitly approved.
+  behind `FUNCTION_BATCHES_ENABLED=false`. On 2026-07-21 the owner explicitly
+  approved skipping staging and validating the new path directly in production.
 
 ## Blockers
 
@@ -55,13 +54,15 @@ as the project advances.
   successfully; the Scheduler remains enabled on a five-minute cadence.
 - Pull requests #56 and #57 passed CI, GitGuardian, and material-finding review.
 - Issue #59 local verification passes 348 tests after final runtime wiring;
-  no production configuration has been changed.
+  production release is approved but not yet completed.
 
 ## Safe Next Actions
 
-1. Apply migration `0004` in staging, enable function batches there with
-   `AGENT_MODEL=gpt-5.5`, and smoke create/multi-create/update/replay/pending and
-   all statistics functions.
+1. Deploy the merged code to production with function batches disabled, apply
+   migration `0004`, then set `AGENT_MODEL=gpt-5.5` and
+   `FUNCTION_BATCHES_ENABLED=true` before smoking health,
+   create/multi-create/update/replay/pending, and statistics. Disable the flag
+   immediately if a material check fails.
 2. Keep the Google Sheets rollback credentials and unchanged `Transactions`
    worksheet until an explicit stabilization decision.
 3. Investigate any projection `last_error` without moving the cursor manually;

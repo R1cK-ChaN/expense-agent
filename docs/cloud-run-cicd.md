@@ -47,16 +47,22 @@ Example non-secret config:
 SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres
 ```
 
-Staging function-batch example after migration `0004` is applied:
+Function-batch configuration after migration `0004` is applied:
 
 ```text
-SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,STORAGE_BACKEND=postgres
+SERVICE_NAME=expense-agent,DEFAULT_TIMEZONE=Asia/Singapore,DEFAULT_CURRENCY=SGD,PARSER_MODEL=gpt-5-nano,FUNCTION_BATCHES_ENABLED=true,AGENT_MODEL=gpt-5.5,STORAGE_BACKEND=postgres
 ```
 
-Keep `FUNCTION_BATCHES_ENABLED=false` in production until staging create,
-multi-create, update, duplicate-delivery, clarification, and statistics smokes
-pass. Disable it to return immediately to the legacy parser handler; the schema
-and legacy duplicate queries remain compatible with batch-created rows.
+The normal release path validates create, multi-create, update,
+duplicate-delivery, clarification, and statistics before production exposure.
+For the 2026-07-21 release, the owner explicitly approved skipping staging and
+running those smokes in production. Deploy the code with
+`FUNCTION_BATCHES_ENABLED=false`, apply migration `0004`, then enable the flag.
+Disable it immediately to return to the legacy parser handler if a material
+production smoke fails; the schema and legacy duplicate queries remain
+compatible with batch-created rows.
+Retain `PARSER_MODEL` while the function path is enabled so changing the flag
+to false remains a valid, immediate legacy-handler deployment.
 When the variable is omitted, the deploy script explicitly writes
 `FUNCTION_BATCHES_ENABLED=false` so Cloud Run cannot retain a prior enabled
 value across rollback deployments.
@@ -67,9 +73,10 @@ Example Secret Manager mappings:
 TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,WECHAT_TOKEN=wechat-token:latest,PARSER_API_KEY=parser-api-key:latest,DATABASE_URL=database-url:latest
 ```
 
-The deployment script validates credentials for the selected backend.
-Production must retain its current setting until backfill verification and the
-staging smoke path succeed; a successful deploy does not authorize cutover.
+The deployment script validates credentials for the selected backend. A
+successful deploy does not authorize cutover unless the owner has separately
+approved production exposure; that approval was recorded for the 2026-07-21
+direct-production validation.
 
 For Cloud SQL, store a percent-encoded Unix-socket URL in the `DATABASE_URL`
 Secret Manager secret:

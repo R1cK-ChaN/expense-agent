@@ -248,8 +248,9 @@ runtime traffic prematurely:
 `app/main.py` now wires this path when `FUNCTION_BATCHES_ENABLED=true`, the
 selected storage backend is PostgreSQL, and required credentials are present.
 The setting defaults to false, so production remains on the legacy parser path
-until staging validation and an explicit production exposure decision. The new
-schema is expand-compatible: the legacy
+until an explicit production exposure decision. The normal release path uses
+staging first; the owner approved direct production validation for the
+2026-07-21 release. The new schema is expand-compatible: the legacy
 `created_from_message_id` uniqueness contract remains intact while new batch
 transactions use a separate batch/call identity.
 
