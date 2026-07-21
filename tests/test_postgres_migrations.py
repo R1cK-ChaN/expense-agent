@@ -9,6 +9,9 @@ EXTERNAL_ID_MIGRATION_PATH = (
     ROOT / "migrations" / "0002_add_transaction_external_id.sql"
 )
 SHEET_EXPORT_MIGRATION_PATH = ROOT / "migrations" / "0003_google_sheets_export.sql"
+FUNCTION_BATCH_MIGRATION_PATH = (
+    ROOT / "migrations" / "0004_function_call_batches.sql"
+)
 
 
 def _migration_sql() -> str:
@@ -81,6 +84,40 @@ def test_google_sheets_export_migration_adds_per_user_sync_config():
     assert "idx_google_sheet_exports_enabled" in sql
 
 
+def test_function_batch_migration_preserves_legacy_single_message_constraint():
+    sql = FUNCTION_BATCH_MIGRATION_PATH.read_text().lower()
+
+    assert "drop constraint transactions_created_from_message_id_key" not in sql
+    assert "add column function_batch_id uuid" in sql
+    assert "add column function_call_index integer" in sql
+    assert "unique (function_batch_id, function_call_index)" in sql
+
+
+def test_function_batch_migration_adds_delivery_idempotency_and_results():
+    sql = FUNCTION_BATCH_MIGRATION_PATH.read_text().lower()
+
+    assert "create table function_call_batches" in sql
+    assert "inbound_message_id uuid not null unique references inbound_messages(id)" in sql
+    assert "accepted_calls jsonb not null" in sql
+    assert "reply_text text" in sql
+    assert (
+        "status in ('accepted', 'writes_committed', 'completed', 'failed')"
+        in sql
+    )
+    assert "create table function_call_executions" in sql
+    assert "primary key (function_batch_id, function_call_index)" in sql
+
+
+def test_function_batch_migration_adds_one_expiring_pending_request_per_chat():
+    sql = FUNCTION_BATCH_MIGRATION_PATH.read_text().lower()
+
+    assert "create table pending_requests" in sql
+    assert "unique (identity_id, platform_chat_id)" in sql
+    assert "known_arguments jsonb not null" in sql
+    assert "missing_fields text[] not null" in sql
+    assert "expires_at timestamptz not null" in sql
+
+
 def test_transaction_events_support_append_only_audit_history():
     sql = _migration_sql()
 
@@ -127,3 +164,4 @@ def test_postgres_migration_check_command_validates_local_files():
     assert "0001_initial_schema.sql" in result.stdout
     assert "0002_add_transaction_external_id.sql" in result.stdout
     assert "0003_google_sheets_export.sql" in result.stdout
+    assert "0004_function_call_batches.sql" in result.stdout

@@ -15,3 +15,4 @@ and supersession links.
 | --- | --- | --- |
 | [001](001-postgresql-ledger-ownership.md) | Accepted | PostgreSQL owns the authoritative ledger; Google Sheets is a projection and temporary rollback path. |
 | [002](002-documentation-is-source.md) | Accepted | The handbook is the normative system definition; code and tests are executable conformance evidence. |
+| [003](003-deterministic-function-batches.md) | Accepted | The LLM selects one function batch; deterministic backend code owns validation, ledger access, statistics, and replies. |

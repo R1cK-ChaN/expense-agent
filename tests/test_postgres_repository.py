@@ -14,9 +14,22 @@ from integrations.google_sheets.repository import (
     TransactionRepositoryError,
 )
 from integrations.postgres.repository import PostgresTransactionRepository
+from integrations.postgres.repository import (
+    SELECT_TRANSACTION_BY_MESSAGE_ID_SQL,
+    SELECT_TRANSACTION_BY_SOURCE_MESSAGE_SQL,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_legacy_duplicate_queries_also_recognize_function_batch_transactions():
+    for sql in (
+        SELECT_TRANSACTION_BY_MESSAGE_ID_SQL,
+        SELECT_TRANSACTION_BY_SOURCE_MESSAGE_SQL,
+    ):
+        assert "from function_call_batches b" in sql
+        assert "b.inbound_message_id = m.id" in sql
 
 
 def test_append_transaction_persists_message_transaction_and_creation_event_atomically():

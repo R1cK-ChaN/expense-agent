@@ -237,6 +237,19 @@ runtime traffic prematurely:
   currency conversion, aggregation, comparisons, ranking, and deterministic
   statistics rendering. The existing monthly query path already reuses its
   summary calculation and renderer.
+- `core/function_batch_executor.py` validates the entire proposal before any
+  persistence, sends all create/update commands through one atomic write unit,
+  runs reads only after that commit, and constructs the final reply without an
+  LLM.
+- `integrations/postgres/function_batch_repository.py` owns durable provider
+  delivery claims, call-index idempotency, write-batch state, stored replies,
+  and the single expiring pending request per chat.
+
+The production handler is still the legacy parser path until the final runtime
+wiring, staging validation, and explicit production exposure decision are
+complete. The new schema is expand-compatible: the legacy
+`created_from_message_id` uniqueness contract remains intact while new batch
+transactions use a separate batch/call identity.
 
 These modules are not yet the default IM runtime. `docs/now.md` owns the
 transitional state until the validated batch executor, PostgreSQL atomicity,
