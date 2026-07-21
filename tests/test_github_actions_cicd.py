@@ -30,6 +30,7 @@ def test_deploy_workflow_uses_workload_identity_and_not_github_secrets():
     assert "workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" in workflow
     assert "service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in workflow
     assert "scripts/deploy_cloud_run.sh" in workflow
+    assert "CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}" in workflow
     assert "secrets." not in workflow
 
 
@@ -44,6 +45,7 @@ def test_projection_deploy_workflow_is_explicit_and_environment_scoped():
     assert "BOT_RUNTIME_SERVICE_ACCOUNT" in workflow
     assert "SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT" in workflow
     assert "SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT" in workflow
+    assert "CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}" in workflow
     assert "secrets." not in workflow
 
 
@@ -162,6 +164,7 @@ def test_projection_job_updates_an_existing_schedule_idempotently(tmp_path):
             "CLOUD_RUN_REGION": "asia-southeast1",
             "SHEET_PROJECTION_JOB": "expense-sheet-projection",
             "SHEET_PROJECTION_IMAGE_URI": "image.example/expense-agent:sha",
+            "CLOUD_SQL_INSTANCE": "project-id:asia-southeast1:expense-postgres",
             "BOT_RUNTIME_SERVICE_ACCOUNT": "bot@example.test",
             "SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT": "projection@example.test",
             "SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT": "scheduler@example.test",
@@ -178,6 +181,10 @@ def test_projection_job_updates_an_existing_schedule_idempotently(tmp_path):
     assert result.returncode == 0
     commands = command_log.read_text(encoding="utf-8")
     assert "run jobs deploy expense-sheet-projection" in commands
+    assert (
+        "--set-cloudsql-instances=project-id:asia-southeast1:expense-postgres"
+        in commands
+    )
     assert "scheduler jobs update http expense-sheet-projection-schedule" in commands
     assert "scheduler jobs create http" not in commands
 
@@ -221,6 +228,34 @@ def test_cloud_run_deploy_script_allows_postgres_backend_without_google_settings
 
     assert result.returncode == 0
     assert "::error::" not in result.stdout
+
+
+def test_cloud_run_deploy_attaches_configured_cloud_sql_instance(tmp_path):
+    install_fake_deploy_commands(tmp_path)
+    command_log = tmp_path / "gcloud.log"
+    result = run_deploy_script(
+        tmp_path,
+        {
+            "FAKE_GCLOUD_LOG": str(command_log),
+            "CLOUD_SQL_INSTANCE": "project-id:asia-southeast1:expense-postgres",
+            "CLOUD_RUN_ENV_VARS": (
+                "PARSER_MODEL=gpt-4.1-mini,STORAGE_BACKEND=postgres"
+            ),
+            "CLOUD_RUN_SECRET_MAPPINGS": (
+                "TELEGRAM_BOT_TOKEN=telegram-token:latest,"
+                "TELEGRAM_WEBHOOK_SECRET=telegram-webhook-secret:latest,"
+                "WECHAT_TOKEN=wechat-token:latest,"
+                "PARSER_API_KEY=parser-api-key:latest,"
+                "DATABASE_URL=database-url:latest"
+            ),
+        },
+    )
+
+    assert result.returncode == 0
+    assert (
+        "--set-cloudsql-instances=project-id:asia-southeast1:expense-postgres"
+        in command_log.read_text(encoding="utf-8")
+    )
 
 
 def test_cloud_run_deploy_script_requires_database_url_for_postgres(tmp_path):

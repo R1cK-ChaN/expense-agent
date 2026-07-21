@@ -20,6 +20,10 @@ verification does not by itself authorize production exposure.
   projection header. Do not replace or rename `Transactions`; it is required by
   the temporary rollback repository.
 - No production bot configuration changes without explicit approval.
+- For Cloud SQL, `CLOUD_SQL_INSTANCE` names the attached instance and
+  `DATABASE_URL` uses its `/cloudsql/PROJECT:REGION:INSTANCE` Unix socket. The
+  bot and projection runtime identities have Cloud SQL Client access; the
+  scheduler identity does not.
 
 Validate local migration files:
 

@@ -39,6 +39,7 @@ Optional variables:
 | --- | --- |
 | `IMAGE_NAME` | Artifact Registry image name. Defaults to `expense-agent`. |
 | `CLOUD_RUN_SERVICE_ACCOUNT` | Runtime service account for the Cloud Run revision. |
+| `CLOUD_SQL_INSTANCE` | Cloud SQL connection name (`project:region:instance`). When set, the deploy script attaches its Auth socket to Cloud Run. |
 
 Example non-secret config:
 
@@ -55,6 +56,19 @@ TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET=telegram-we
 The deployment script validates credentials for the selected backend.
 Production must retain its current setting until backfill verification and the
 staging smoke path succeed; a successful deploy does not authorize cutover.
+
+For Cloud SQL, store a percent-encoded Unix-socket URL in the `DATABASE_URL`
+Secret Manager secret:
+
+```text
+postgresql://USER:PASSWORD@/DATABASE?host=/cloudsql/PROJECT:REGION:INSTANCE
+```
+
+Set `CLOUD_SQL_INSTANCE` to the matching connection name. The bot runtime and
+projection runtime service accounts require `roles/cloudsql.client`; the
+scheduler identity does not. The instance may use its connector-facing public
+address without an authorized-network allowlist because the Cloud Run socket
+uses the authenticated Cloud SQL connection path.
 
 ## GCP Setup
 
@@ -87,6 +101,7 @@ Configure these variables in each GitHub environment:
 | --- | --- |
 | `SHEET_PROJECTION_JOB` | Stable Cloud Run Job name. |
 | `SHEET_PROJECTION_IMAGE_URI` | Already-built Expense Agent image containing `scripts/`. |
+| `CLOUD_SQL_INSTANCE` | Cloud SQL connection name attached to the projection Job. |
 | `CLOUD_RUN_SERVICE_ACCOUNT` | Existing bot runtime identity, used to reject credential reuse by the projection job. |
 | `SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT` | Dedicated job identity with access only to projection secrets and required APIs. |
 | `SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT` | Separate identity permitted to invoke only the projection job. |
