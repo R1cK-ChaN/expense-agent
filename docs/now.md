@@ -23,7 +23,12 @@ as the project advances.
 
 ## Active Work
 
-- Issue #55: persist final production cutover evidence and close delivery.
+- Issue #59: replace parser-only interpretation with one-shot function-call
+  batches, deterministic backend replies, GPT-5.5, and deterministic statistics.
+- The function-batch domain language and provider-neutral contract are being
+  introduced incrementally. Production still uses the existing parser-only
+  runtime until the complete Issue #59 path passes staging validation and is
+  explicitly approved for production exposure.
 
 ## Blockers
 

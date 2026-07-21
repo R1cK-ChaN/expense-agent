@@ -3,9 +3,16 @@ from collections.abc import Mapping, Sequence
 from typing import Protocol
 from urllib import error, request
 
+from core.function_calls import (
+    ApplicationFunction,
+    FunctionCallBatch,
+    FunctionCallProposal,
+)
+
 
 OPENAI_COMPATIBLE_API_BASE_URL = "https://api.openai.com/v1"
 MINIMAL_REASONING_EFFORT = "minimal"
+LOW_REASONING_EFFORT = "low"
 
 
 class LLMClientError(Exception):
@@ -71,6 +78,61 @@ class OpenAICompatibleLLMClient:
             raise LLMClientError("LLM provider request failed.") from None
 
         return _extract_message_content(response)
+
+
+class OpenAIResponsesFunctionClient:
+    """Select one complete allowlisted function batch through Responses API."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        transport: JsonTransport | None = None,
+        api_base_url: str = OPENAI_COMPATIBLE_API_BASE_URL,
+    ) -> None:
+        if not api_key:
+            raise ValueError("api_key must be configured")
+        if not model:
+            raise ValueError("model must be configured")
+
+        self._api_key = api_key
+        self._model = model
+        self._transport = transport or UrllibJsonTransport()
+        self._api_base_url = api_base_url.rstrip("/")
+
+    def select_functions(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        tools: Sequence[Mapping[str, object]],
+    ) -> FunctionCallBatch:
+        _validate_strict_function_schemas(tools)
+        payload: dict[str, object] = {
+            "model": self._model,
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "tools": list(tools),
+            "tool_choice": "required",
+            "parallel_tool_calls": True,
+            "reasoning": {"effort": LOW_REASONING_EFFORT},
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            response = self._transport.post_json(
+                f"{self._api_base_url}/responses",
+                headers=headers,
+                payload=payload,
+            )
+        except Exception:
+            raise LLMClientError("LLM provider request failed.") from None
+
+        return _extract_function_batch(response)
 
 
 class UrllibJsonTransport:
@@ -166,3 +228,78 @@ def _extract_message_content(response: Mapping[str, object]) -> str:
         raise LLMClientError("LLM provider returned invalid JSON.")
 
     return content
+
+
+def _validate_strict_function_schemas(
+    tools: Sequence[Mapping[str, object]],
+) -> None:
+    if not tools:
+        raise ValueError("at least one strict function schema is required")
+    for tool in tools:
+        parameters = tool.get("parameters")
+        try:
+            ApplicationFunction(str(tool.get("name")))
+        except ValueError:
+            raise ValueError("unknown application function schema") from None
+        if (
+            tool.get("type") != "function"
+            or tool.get("strict") is not True
+            or not isinstance(parameters, Mapping)
+            or parameters.get("additionalProperties") is not False
+        ):
+            raise ValueError("tools must use a strict function schema")
+
+
+def _extract_function_batch(response: Mapping[str, object]) -> FunctionCallBatch:
+    if response.get("status") != "completed":
+        raise LLMClientError("LLM provider response is not completed.")
+    output = response.get("output")
+    if isinstance(output, str | bytes) or not isinstance(output, Sequence):
+        raise LLMClientError("LLM provider returned invalid function output.")
+
+    proposals: list[FunctionCallProposal] = []
+    for item in output:
+        if not isinstance(item, Mapping):
+            raise LLMClientError("LLM provider returned invalid function output.")
+        item_type = item.get("type")
+        if item_type == "reasoning":
+            continue
+        if item_type == "message":
+            raise LLMClientError("LLM provider must not return assistant text.")
+        if item_type != "function_call":
+            raise LLMClientError("LLM provider returned invalid function output.")
+        if item.get("status") != "completed":
+            raise LLMClientError("LLM provider function call is not completed.")
+
+        function_name = item.get("name")
+        if not isinstance(function_name, str):
+            raise LLMClientError("LLM provider returned unknown function.")
+        try:
+            function = ApplicationFunction(function_name)
+        except ValueError:
+            raise LLMClientError("LLM provider returned unknown function.") from None
+
+        arguments_json = item.get("arguments")
+        if not isinstance(arguments_json, str):
+            raise LLMClientError("LLM provider returned invalid function arguments.")
+        try:
+            arguments = json.loads(arguments_json)
+        except json.JSONDecodeError:
+            raise LLMClientError(
+                "LLM provider returned invalid function arguments."
+            ) from None
+        if not isinstance(arguments, Mapping):
+            raise LLMClientError("LLM provider returned invalid function arguments.")
+        proposals.append(
+            FunctionCallProposal(
+                function=function,
+                arguments=dict(arguments),
+            )
+        )
+
+    try:
+        return FunctionCallBatch(calls=tuple(proposals))
+    except ValueError:
+        raise LLMClientError(
+            "LLM provider must return a non-empty function batch."
+        ) from None

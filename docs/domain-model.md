@@ -8,6 +8,104 @@ results describe the user's intent, domain validation decides whether the intent
 is safe to execute, PostgreSQL owns accepted transaction state, and Google Sheets
 is a derived user-visible projection.
 
+## Canonical Language
+
+**Authoritative Ledger**:
+The single accepted record of committed transaction state. PostgreSQL is the
+only authoritative ledger.
+_Avoid_: source of truth, PostgreSQL ledger, Google Sheets ledger
+
+**Ledger Projection**:
+A replaceable user-visible view derived from the authoritative ledger. Google
+Sheets is a ledger projection and cannot create or change authoritative
+transaction state.
+_Avoid_: authoritative Sheet, second ledger, writable ledger copy
+
+**Function Call Proposal**:
+An untrusted structured request produced by the LLM to invoke an application
+function. It is neither authorization nor evidence that an operation succeeded.
+_Avoid_: execution result, trusted command, LLM decision
+
+**Function Call Batch**:
+One or more function call proposals selected by the LLM for a single inbound
+message from the functions exposed by the backend. The LLM returns the complete
+batch in one response and never receives operation results for another round of
+function selection. Every proposal remains subject to backend validation and
+authorization.
+_Avoid_: unrestricted tool access, trusted execution plan, agent loop
+
+Function call batch invariants:
+
+- A valid batch contains at least one function call proposal.
+- All mutating calls are validated before any ledger state changes.
+- Mutating calls commit atomically: either every valid mutation in the batch is
+  committed or none is committed.
+- Read-only calls execute only after the mutating calls commit and observe the
+  resulting authoritative ledger state.
+- A read-only call failure never rolls back committed mutations.
+
+**Clarification Request**:
+A non-ledger operation selected when required information is missing or
+ambiguous. The backend renders its deterministic reply from allowlisted reason
+codes and missing fields.
+_Avoid_: model-written clarification, free-form reply
+
+**Unsupported Request**:
+A non-ledger operation selected when the requested capability is outside the
+product boundary. The backend renders its deterministic reply from an
+allowlisted capability code.
+_Avoid_: empty function batch, model refusal
+
+**Immediate Write Authorization**:
+A clear inbound request authorizes validated expense creation or a validated
+update whose target resolves to exactly one transaction. These operations do
+not require a second confirmation message.
+_Avoid_: model authorization, implicit destructive consent
+
+Destructive deletion and bulk destructive mutation are not exposed application
+functions. If introduced later, they require a separately designed confirmation
+policy owned by the backend rather than the LLM.
+
+**Pending Request**:
+The single incomplete function request retained for one IM conversation after
+the backend asks for specific missing or ambiguous information. It contains
+only the proposed function, known structured arguments, missing fields, and an
+expiry; it is not general conversation memory.
+_Avoid_: chat history, agent memory, workflow stack
+
+Pending request invariants:
+
+- At most one pending request exists for a source platform, user, and chat.
+- A pending request expires after ten minutes and unrelated messages do not
+  extend its lifetime.
+- Successful completion removes the pending request.
+- A complete, unambiguous new request replaces the pending request.
+- Pending requests never cross platforms, users, or chats and retain no history
+  after completion, replacement, or expiry.
+
+**Operation Result**:
+The authoritative outcome returned after the backend validates and executes an
+application function. Only an operation result may describe committed ledger
+state or calculated statistics.
+_Avoid_: model answer, tool suggestion
+
+**Deterministic Reply**:
+User-visible text rendered by the backend from an operation result. The LLM
+never writes or paraphrases the final reply sent through an IM channel.
+_Avoid_: LLM reply, model summary, free-form statistical answer
+
+**User Repeat**:
+A new inbound message that repeats earlier content but has a different provider
+message identifier. It represents another user action and must not be merged or
+suppressed because its text or proposed transactions look similar.
+_Avoid_: duplicate transaction, retry
+
+**Delivery Retry**:
+A repeated delivery carrying the same source platform, user, chat, and provider
+message identifiers. It represents one user action and must execute its function
+call batch at most once.
+_Avoid_: repeated user entry, similar expense
+
 ## IM Source Metadata
 
 IM source metadata is captured for every handled message so the backend can reply, preserve audit context, and avoid duplicate writes across Telegram and WeChat.
@@ -74,7 +172,11 @@ Invariants:
 - `created_at` must not change after creation.
 - `updated_at` must change when a stored transaction is updated.
 - Generated `created_at` and `updated_at` timestamps use the configured timezone and include an explicit offset, initially `Asia/Singapore` / `+08:00`.
-- A source platform/user/chat/message tuple can create at most one transaction unless future requirements explicitly support multi-expense messages.
+- A source platform/user/chat/message tuple identifies one function call batch.
+- Each accepted create-expense call in that batch can create at most one
+  transaction, and one batch may create multiple transactions atomically.
+- Messages with different provider message identifiers may create otherwise
+  identical transactions; content similarity is never an idempotency key.
 
 Create-expense validation returns a normalized transaction candidate before any
 repository write is allowed:
@@ -87,7 +189,8 @@ repository write is allowed:
 - Unsupported currency values fail validation before storage writes.
 - Missing, blank, or unsupported `category` values become `未分类`.
 - Missing `type` defaults to `expense`; any other type fails for the MVP.
-- Messages that appear to contain multiple expense lines fail rather than creating multiple rows.
+- Messages containing multiple valid expenses may produce one create-expense
+  function call per expense in a single atomic batch.
 
 ## Parser Result
 
