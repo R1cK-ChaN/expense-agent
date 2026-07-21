@@ -14,10 +14,12 @@ from core.function_calls import (
     FunctionCallBatch,
     FunctionCallProposal,
 )
-from core.messages import InboundMessage
+from core.messages import ConversationKind, InboundMessage
 from core.pending_requests import PendingRequestService
 from core.statistics import (
     StatisticsFilters,
+    StatisticsQueryScope,
+    StatisticsScopeMode,
     render_recent_expenses,
     render_spending_comparison,
     render_spending_summary,
@@ -263,10 +265,15 @@ class FunctionBatchExecutor:
     ) -> "_ReadCall":
         arguments = call.arguments
         filters = _validated_filters(arguments)
+        scope = _resolved_statistics_scope(message, arguments.get("scope"))
         today = message.received_at.astimezone(ZoneInfo(self._timezone)).date()
         if call.function is ApplicationFunction.LIST_RECENT_EXPENSES:
             limit = _validated_limit(arguments.get("limit"))
-            return _ReadCall(call_index, call.function, {"filters": filters, "limit": limit})
+            return _ReadCall(
+                call_index,
+                call.function,
+                {"scope": scope, "filters": filters, "limit": limit},
+            )
         if call.function is ApplicationFunction.COMPARE_SPENDING_PERIODS:
             current = _resolved_period(arguments.get("current_period"), today=today)
             comparison = _resolved_period(
@@ -278,12 +285,14 @@ class FunctionBatchExecutor:
                 {
                     "current_range": current,
                     "comparison_range": comparison,
+                    "scope": scope,
                     "filters": filters,
                 },
             )
         date_range = _resolved_period(arguments.get("period"), today=today)
         read_arguments: dict[str, object] = {
             "date_range": date_range,
+            "scope": scope,
             "filters": filters,
         }
         if call.function is ApplicationFunction.GET_TOP_EXPENSES:
@@ -293,11 +302,7 @@ class FunctionBatchExecutor:
     def _execute_read(self, message: InboundMessage, call: "_ReadCall") -> str:
         if self._statistics is None:
             raise RuntimeError("statistics service is unavailable")
-        common = {
-            "source_platform": message.source_platform,
-            "user_id": message.source_user_id,
-            **call.arguments,
-        }
+        common = dict(call.arguments)
         if call.function is ApplicationFunction.GET_SPENDING_SUMMARY:
             value = self._statistics.get_spending_summary(**common)
             return value if isinstance(value, str) else render_spending_summary(value)
@@ -475,6 +480,26 @@ def _validated_filters(arguments: Mapping[str, object]) -> StatisticsFilters:
     return StatisticsFilters(
         category=category,
         merchant=_optional_string(arguments.get("merchant")),
+    )
+
+
+def _resolved_statistics_scope(
+    message: InboundMessage,
+    proposed_scope: object,
+) -> StatisticsQueryScope:
+    if proposed_scope not in {None, "personal"}:
+        raise FunctionBatchValidationError("statistics scope is invalid")
+    mode = (
+        StatisticsScopeMode.PERSONAL
+        if proposed_scope == "personal"
+        or message.conversation_kind is ConversationKind.PERSONAL
+        else StatisticsScopeMode.CONVERSATION
+    )
+    return StatisticsQueryScope(
+        mode=mode,
+        source_platform=message.source_platform,
+        source_user_id=message.source_user_id,
+        source_chat_id=message.source_chat_id,
     )
 
 

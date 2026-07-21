@@ -6,9 +6,10 @@ as the project advances.
 
 ## Current State
 
-- PRs #60/#61 and Issue #59 are merged and closed.
+- PRs #60–#62 and Issue #59 are merged and closed. Issue #63 corrects group
+  statistics scope after production diagnosis found personal-only reads.
 - PostgreSQL is the deployed production source of truth. Cloud Run revision
-  `expense-agent-00030-cm9` serves 100% of traffic with
+  `expense-agent-00031-2b5` serves 100% of traffic with
   `STORAGE_BACKEND=postgres`, `FUNCTION_BATCHES_ENABLED=true`,
   `AGENT_MODEL=gpt-5.5`, a Secret Manager `DATABASE_URL`, and an authenticated
   Cloud SQL attachment.
@@ -24,8 +25,8 @@ as the project advances.
 
 ## Active Work
 
-- Observe real production requests through the GPT-5.5 function-batch path and
-  investigate any semantic failure using privacy-safe function outcome logs.
+- Issue #63 implements deterministic personal/private and conversation/group
+  statistics scope without changing write ownership or adding a migration.
 
 ## Blockers
 
@@ -53,15 +54,17 @@ as the project advances.
   review. Migration `0004` completed through the one-time production Cloud Run
   Job execution `expense-agent-migrate-0004-cw7xn`; the Job configuration was
   removed afterward while execution logs remain available.
-- Production revision `expense-agent-00030-cm9` started cleanly, passed the
+- Production revision `expense-agent-00031-2b5` started cleanly, passed the
   deployment and independent `/health` checks, and has no startup errors.
+- Production diagnosis for Issue #63 confirmed the July query had correct dates
+  and filters but read only the requester; the same chat contained the expected
+  cross-member transactions. No production ledger rows were modified.
 
 ## Safe Next Actions
 
-1. Exercise create/multi-create/update/replay/pending and statistics through a
-   real production IM conversation; do not add fabricated ledger entries solely
-   for smoke testing. Inspect semantic outcome logs after each controlled case.
-   Disable `FUNCTION_BATCHES_ENABLED` immediately if a material check fails.
+1. Complete Issue #63, deploy through the existing production workflow, and
+   repeat the real Telegram group July-to-date query. Confirm the result uses
+   conversation scope while an explicit personal query remains personal.
 2. Keep the Google Sheets rollback credentials and unchanged `Transactions`
    worksheet until an explicit stabilization decision.
 3. Investigate any projection `last_error` without moving the cursor manually;

@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from core.statistics import StatisticsQueryScope, StatisticsScopeMode
+
 from integrations.google_sheets.repository import (
     InvalidTransactionUpdateError,
     TransactionNotFoundError,
@@ -15,6 +17,8 @@ from integrations.google_sheets.repository import (
 )
 from integrations.postgres.repository import PostgresTransactionRepository
 from integrations.postgres.repository import (
+    SELECT_CONVERSATION_TRANSACTIONS_BY_DATE_RANGE_SQL,
+    SELECT_RECENT_CONVERSATION_TRANSACTIONS_SQL,
     SELECT_TRANSACTION_BY_MESSAGE_ID_SQL,
     SELECT_TRANSACTION_BY_SOURCE_MESSAGE_SQL,
 )
@@ -337,13 +341,94 @@ def test_list_expenses_filters_inclusive_date_range():
         )
 
     records = repository.list_expenses(
-        source_platform="telegram",
-        user_id="42",
+        scope=StatisticsQueryScope(
+            mode=StatisticsScopeMode.PERSONAL,
+            source_platform="telegram",
+            source_user_id="42",
+            source_chat_id="12345",
+        ),
         start_date="2026-05-10",
         end_date="2026-05-20",
     )
 
     assert [record.id for record in records] == ["start", "end"]
+
+
+def test_list_expenses_preserves_legacy_personal_query_interface():
+    database = InMemoryPostgresDatabase()
+    repository = make_repository(database)
+    repository.append_transaction(
+        make_record(transaction_id="requester", source_message_id="requester")
+    )
+    repository.append_transaction(
+        make_record(
+            transaction_id="other-user",
+            source_user_id="7",
+            source_message_id="other-user",
+        )
+    )
+
+    records = repository.list_expenses(
+        source_platform="telegram",
+        user_id="42",
+        start_date="2026-05-01",
+        end_date="2026-05-31",
+    )
+
+    assert [record.id for record in records] == ["requester"]
+
+
+def test_conversation_queries_constrain_platform_and_chat_across_members():
+    database = InMemoryPostgresDatabase()
+    repository = make_repository(database)
+    for transaction_id, user_id, platform, chat_id in (
+        ("requester", "42", "telegram", "group-1"),
+        ("other-member", "7", "telegram", "group-1"),
+        ("other-chat", "8", "telegram", "group-2"),
+        ("other-platform", "9", "wechat", "group-1"),
+    ):
+        repository.append_transaction(
+            make_record(
+                transaction_id=transaction_id,
+                source_user_id=user_id,
+                source_platform=platform,
+                source_chat_id=chat_id,
+                source_message_id=transaction_id,
+                date="2026-07-10",
+            )
+        )
+
+    scope = StatisticsQueryScope(
+        mode=StatisticsScopeMode.CONVERSATION,
+        source_platform="telegram",
+        source_user_id="42",
+        source_chat_id="group-1",
+    )
+    records = repository.list_expenses(
+        scope=scope,
+        start_date="2026-07-01",
+        end_date="2026-07-21",
+    )
+    recent = repository.list_recent_expenses(
+        scope=scope,
+        category=None,
+        merchant=None,
+        limit=20,
+    )
+
+    assert {record.id for record in records} == {"requester", "other-member"}
+    assert {record.id for record in recent} == {"requester", "other-member"}
+
+
+def test_conversation_sql_supports_legacy_and_function_batch_origins():
+    for sql in (
+        SELECT_CONVERSATION_TRANSACTIONS_BY_DATE_RANGE_SQL,
+        SELECT_RECENT_CONVERSATION_TRANSACTIONS_SQL,
+    ):
+        assert "t.created_from_message_id" in sql
+        assert "t.function_batch_id" in sql
+        assert "coalesce(m.platform, batch_m.platform)" in sql
+        assert "coalesce(m.platform_chat_id, batch_m.platform_chat_id)" in sql
 
 
 def test_list_transactions_returns_all_records_for_backfill_verification():
@@ -825,6 +910,61 @@ class InMemoryPostgresConnection:
         ]
         rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
         return rows
+
+    def _postgres_repository_select_conversation_transactions_by_date_range(
+        self,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows = [
+            self._transaction_row(transaction)
+            for transaction in self.database.transactions.values()
+            if transaction["transaction_type"] == "expense"
+            and params["start_date"]
+            <= transaction["transaction_date"]
+            <= params["end_date"]
+            and self._transaction_matches_conversation(transaction, params)
+        ]
+        rows.sort(key=lambda row: (row["date"], _sort_timestamp(row["created_at"])))
+        return rows
+
+    def _postgres_repository_select_recent_conversation_transactions(
+        self,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows = [
+            self._transaction_row(transaction)
+            for transaction in self.database.transactions.values()
+            if transaction["transaction_type"] == "expense"
+            and self._transaction_matches_conversation(transaction, params)
+            and (
+                params["category"] is None
+                or transaction["category"] == params["category"]
+            )
+            and (
+                params["merchant"] is None
+                or params["merchant"].lower()
+                in (transaction["merchant"] or "").lower()
+            )
+        ]
+        rows.sort(
+            key=lambda row: (row["date"], _sort_timestamp(row["created_at"])),
+            reverse=True,
+        )
+        return rows[: params["limit"]]
+
+    def _transaction_matches_conversation(
+        self,
+        transaction: dict[str, Any],
+        params: dict[str, Any],
+    ) -> bool:
+        message_id = transaction["created_from_message_id"]
+        if message_id is None:
+            return False
+        message = self.database.inbound_messages[message_id]
+        return (
+            message["platform"] == params["platform"]
+            and message["platform_chat_id"] == params["platform_chat_id"]
+        )
 
     def _postgres_repository_select_all_transactions(
         self,

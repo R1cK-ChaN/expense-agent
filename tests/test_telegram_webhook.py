@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.telegram_webhook import UNSUPPORTED_MESSAGE_REPLY
-from core.messages import InboundMessage
+from core.messages import ConversationKind, InboundMessage
 
 
 WEBHOOK_SECRET = "webhook-secret"
@@ -44,6 +44,7 @@ def test_webhook_converts_private_text_message_and_replies():
     )
 
     assert response.status_code == 200
+    assert handled_messages[0].conversation_kind is ConversationKind.PERSONAL
     assert response.json() == {"ok": True, "status": "replied"}
     assert handled_messages == [
         InboundMessage(
@@ -55,6 +56,7 @@ def test_webhook_converts_private_text_message_and_replies():
             received_at=received_at,
             source_username="ada",
             source_user_display_name="Ada Lovelace",
+            conversation_kind=ConversationKind.PERSONAL,
         )
     ]
     assert reply_client.sent_messages == [
@@ -149,6 +151,7 @@ def test_webhook_processes_group_mention_and_strips_bot_username():
             received_at=received_at,
             source_username="ada",
             source_user_display_name="Ada Lovelace",
+            conversation_kind=ConversationKind.GROUP,
         )
     ]
     assert reply_client.sent_messages == [

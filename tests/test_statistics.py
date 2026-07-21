@@ -7,6 +7,8 @@ from core.exchange_rates import ExchangeRateConversion
 from core.statistics import (
     DateRange,
     StatisticsFilters,
+    StatisticsQueryScope,
+    StatisticsScopeMode,
     StatisticsService,
     render_recent_expenses,
     render_spending_comparison,
@@ -60,8 +62,12 @@ def test_statistics_summary_filters_and_converts_without_mutating_repository():
     )
 
     summary = service.get_spending_summary(
-        source_platform="telegram",
-        user_id="42",
+        scope=StatisticsQueryScope(
+            mode=StatisticsScopeMode.CONVERSATION,
+            source_platform="telegram",
+            source_user_id="42",
+            source_chat_id="group-1",
+        ),
         date_range=DateRange("2026-07-01", "2026-07-21"),
         filters=StatisticsFilters(category="餐饮"),
     )
@@ -71,7 +77,14 @@ def test_statistics_summary_filters_and_converts_without_mutating_repository():
     assert summary.foreign_totals == (("CNY", Decimal("30")),)
     assert summary.category_totals == (("餐饮", Decimal("15.40")),)
     assert repository.list_calls == [
-        ("telegram", "42", "2026-07-01", "2026-07-21")
+        (
+            StatisticsScopeMode.CONVERSATION,
+            "telegram",
+            "42",
+            "group-1",
+            "2026-07-01",
+            "2026-07-21",
+        )
     ]
     assert repository.mutation_calls == []
 
@@ -86,8 +99,7 @@ def test_statistics_compare_returns_deterministic_difference_and_percentage():
     service = StatisticsService(repository=repository, currency="SGD")
 
     comparison = service.compare_spending_periods(
-        source_platform="telegram",
-        user_id="42",
+        scope=personal_scope(),
         current_range=DateRange("2026-07-01", "2026-07-21"),
         comparison_range=DateRange("2026-06-01", "2026-06-21"),
     )
@@ -111,14 +123,12 @@ def test_statistics_top_and_recent_expenses_use_deterministic_order():
     service = StatisticsService(repository=repository, currency="SGD")
 
     top = service.get_top_expenses(
-        source_platform="telegram",
-        user_id="42",
+        scope=personal_scope(),
         date_range=DateRange("2026-07-01", "2026-07-21"),
         limit=2,
     )
     recent = service.list_recent_expenses(
-        source_platform="telegram",
-        user_id="42",
+        scope=personal_scope(),
         limit=2,
     )
 
@@ -147,8 +157,7 @@ def test_statistics_summary_renderer_uses_only_calculated_result():
     service = StatisticsService(repository=repository, currency="SGD")
 
     summary = service.get_spending_summary(
-        source_platform="telegram",
-        user_id="42",
+        scope=personal_scope(),
         date_range=DateRange("2026-07-01", "2026-07-21"),
     )
 
@@ -180,25 +189,38 @@ class FakeStatisticsRepository:
     def list_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         start_date: str,
         end_date: str,
     ) -> list[TransactionRecord]:
-        self.list_calls.append((source_platform, user_id, start_date, end_date))
+        self.list_calls.append(
+            (
+                scope.mode,
+                scope.source_platform,
+                scope.source_user_id,
+                scope.source_chat_id,
+                start_date,
+                end_date,
+            )
+        )
         return list(self._records_by_range.get((start_date, end_date), self._records))
 
     def list_recent_expenses(
         self,
         *,
-        source_platform: str,
-        user_id: str,
+        scope: StatisticsQueryScope,
         category: str | None,
         merchant: str | None,
         limit: int,
     ) -> list[TransactionRecord]:
         self.recent_calls.append(
-            (source_platform, user_id, category, merchant, limit)
+            (
+                scope.source_platform,
+                scope.source_user_id,
+                category,
+                merchant,
+                limit,
+            )
         )
         return list(self._recent_records[:limit])
 
@@ -221,6 +243,15 @@ class FakeExchangeRateProvider:
             rate=Decimal("0.18"),
             rate_date=date,
         )
+
+
+def personal_scope() -> StatisticsQueryScope:
+    return StatisticsQueryScope(
+        mode=StatisticsScopeMode.PERSONAL,
+        source_platform="telegram",
+        source_user_id="42",
+        source_chat_id="42",
+    )
 
 
 def make_record(

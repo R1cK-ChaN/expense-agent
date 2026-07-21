@@ -6,6 +6,7 @@ from datetime import date
 from typing import Protocol
 
 from core.function_calls import APPLICATION_FUNCTION_TOOLS, FunctionCallBatch
+from core.messages import ConversationKind
 
 
 SYSTEM_PROMPT = """
@@ -18,6 +19,9 @@ Use request_clarification or reject_unsupported_request when appropriate.
 When bounded pending-request context is present, combine it only with the
 current message to complete or replace that request; it is not chat history.
 The backend validates every proposal and owns all execution and replies.
+For statistics, propose personal scope only when the user explicitly asks for
+their own spending. Otherwise leave scope null so the backend applies the
+deterministic private-chat or group-chat default.
 """.strip()
 
 
@@ -37,6 +41,7 @@ class FunctionSelectionContext:
     today: date
     timezone: str
     default_currency: str
+    conversation_kind: ConversationKind = ConversationKind.PERSONAL
     pending_request: Mapping[str, object] | None = None
 
 
@@ -63,6 +68,7 @@ def _build_user_prompt(text: str, context: FunctionSelectionContext) -> str:
             f"TODAY: {context.today.isoformat()}",
             f"TIMEZONE: {context.timezone}",
             f"DEFAULT_CURRENCY: {context.default_currency}",
+            f"CONVERSATION_KIND: {context.conversation_kind.value}",
             f"PENDING_REQUEST: {context.pending_request!r}",
             "USER_MESSAGE:",
             text,

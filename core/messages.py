@@ -1,6 +1,12 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
+
+
+class ConversationKind(str, Enum):
+    PERSONAL = "personal"
+    GROUP = "group"
 
 
 @dataclass(frozen=True)
@@ -13,6 +19,7 @@ class InboundMessage:
     received_at: datetime
     source_username: str | None = None
     source_user_display_name: str | None = None
+    conversation_kind: ConversationKind = ConversationKind.PERSONAL
 
 
 TextMessageHandler = Callable[[InboundMessage], str]

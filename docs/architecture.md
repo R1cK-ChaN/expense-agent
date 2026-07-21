@@ -96,7 +96,9 @@ The shared inbound message contract lives in `core/messages.py` as
 `InboundMessage`. Telegram and WeChat adapters map provider payloads into this
 shape with `source_platform`, `source_user_id`, `source_chat_id`,
 `source_message_id`, raw text, optional display metadata, and received
-timestamp fields.
+timestamp fields. It also carries a normalized `conversation_kind`: Telegram
+private chats are personal, Telegram groups/supergroups are group conversations,
+and WeChat Official Account messages are personal.
 
 The Telegram webhook adapter lives in `app/telegram_webhook.py` and exposes
 `POST /telegram/webhook`. It supports private text messages and group or
@@ -235,8 +237,11 @@ runtime traffic prematurely:
   unknown functions, and malformed arguments fail closed.
 - `core/statistics.py` owns bounded period resolution, read-only filters,
   currency conversion, aggregation, comparisons, ranking, and deterministic
-  statistics rendering. The existing monthly query path already reuses its
-  summary calculation and renderer.
+  statistics rendering. It also owns the typed statistics query scope. Private
+  conversations default to personal reads; group conversations default to the
+  same platform and chat across members unless explicit personal wording is
+  proposed. The existing monthly query path already reuses its summary
+  calculation and renderer.
 - `core/function_batch_executor.py` validates the entire proposal before any
   persistence, sends all create/update commands through one atomic write unit,
   runs reads only after that commit, and constructs the final reply without an
@@ -262,6 +267,9 @@ failures so the provider can retry instead of acknowledging an unpersisted
 reply.
 Semantic logs contain outcome, function names/count, and latency, but not call
 arguments, amounts, message text, or provider/user identifiers.
+Conversation-scoped PostgreSQL reads join both legacy inbound-message origins
+and function-batch origins, and constrain platform plus chat ID together. They
+do not alter transaction ownership or update behavior.
 
 ### Google Sheets Repository
 

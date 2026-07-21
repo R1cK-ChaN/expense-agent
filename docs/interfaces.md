@@ -29,12 +29,15 @@ owning documents linked below.
 ### Function Selection
 
 - Input: one current user message plus backend-owned date, timezone, currency,
-  and any bounded pending-request context.
+  normalized conversation kind, and any bounded pending-request context.
 - Output: one non-empty ordered batch containing only allowlisted application
   function proposals with strict structured arguments.
 - Contract: the model runs once, never receives operation results, never accesses
   a repository, and never produces user-visible reply text. Every proposal is
   untrusted until backend validation succeeds.
+- Statistics scope contract: the model may propose `personal` only for explicit
+  personal wording. A null proposal lets the backend deterministically select
+  personal for private conversations and platform-plus-chat scope for groups.
 - Runtime: `FUNCTION_BATCHES_ENABLED=true` selects this path only with
   PostgreSQL. It uses the Responses API and `AGENT_MODEL=gpt-5.5`; the default
   remains disabled until explicit production exposure. The normal release path
@@ -68,8 +71,10 @@ owning documents linked below.
 
 ### Spending Query Repository
 
-- Input: one internal user and an inclusive date range.
+- Input: one typed personal or conversation scope and an inclusive date range.
 - Output: matching transactions in their stored currencies.
+- Contract: conversation reads constrain source platform and source chat across
+  both legacy and function-batch origins; writes and updates remain personal.
 - Contract: queries are read-only; conversion and category aggregation do not
   mutate transaction or projection state.
 - Detail: [Requirements](requirements.md#query-stored-spending) and

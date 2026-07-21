@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, Header, HTTPException
 
-from core.messages import InboundMessage, TextMessageHandler
+from core.messages import ConversationKind, InboundMessage, TextMessageHandler
 
 
 UNSUPPORTED_MESSAGE_REPLY = (
@@ -101,6 +101,7 @@ def create_telegram_webhook_router(
             chat_id,
             message_id,
             message_text,
+            chat_type,
         )
         if inbound_message is None:
             return _ignored_response("invalid_message")
@@ -146,6 +147,7 @@ def _inbound_message_from_telegram(
     chat_id: str,
     message_id: str,
     message_text: str,
+    chat_type: str,
 ) -> TelegramInboundMessage | None:
     from_user = _mapping_value(message.get("from"))
     telegram_user_id = (
@@ -165,6 +167,11 @@ def _inbound_message_from_telegram(
         received_at=received_at,
         source_username=_optional_string_value(from_user.get("username")),
         source_user_display_name=_telegram_user_display_name(from_user),
+        conversation_kind=(
+            ConversationKind.GROUP
+            if chat_type in {"group", "supergroup"}
+            else ConversationKind.PERSONAL
+        ),
     )
 
 

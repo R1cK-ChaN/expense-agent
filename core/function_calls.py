@@ -82,6 +82,13 @@ def _filters() -> dict[str, object]:
     return {
         "category": _nullable_string(enum=[*SUPPORTED_CATEGORIES, None]),
         "merchant": _nullable_string(),
+        "scope": _nullable_string(
+            enum=["personal", None],
+            description=(
+                "Use personal only when the user explicitly asks for their own "
+                "spending; otherwise null lets the backend choose by conversation."
+            ),
+        ),
     }
 
 

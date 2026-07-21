@@ -85,6 +85,11 @@ Expected behavior:
 - The deterministic function runtime supports inclusive summaries, period
   comparisons, category and merchant filters, top expenses, and recent-expense
   lists without model-authored totals or prose.
+- Private-chat statistics default to the requester. Telegram group and
+  supergroup statistics default to all expenses recorded in that same chat;
+  explicit “我个人/我自己的” wording limits the result to the requester.
+- Group statistics must constrain both provider and chat identity and must not
+  include private-chat, other-chat, or other-platform records.
 - Legacy current-month parser responses end on the requesting message's local
   date rather than including future-dated rows.
 
@@ -184,7 +189,9 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 - Receipt OCR or image parsing.
 - Bank, card, wallet, or settlement-rate integrations.
 - Budgeting, alerts, recurring transactions, or forecasting.
-- Shared ledgers, bill splitting, reimbursements, or group accounting.
+- Shared write ownership, bill splitting, reimbursements, or settlement. A
+  read-only Telegram group view over expenses originating in that chat is
+  supported.
 - Live trading exchange rates or bank/card settlement-rate matching.
 - Income, investment, asset, liability, or tax tracking.
 - Direct user editing inside Google Sheets as an application workflow.
