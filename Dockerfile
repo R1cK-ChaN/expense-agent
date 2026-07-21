@@ -10,6 +10,7 @@ COPY app ./app
 COPY config ./config
 COPY core ./core
 COPY integrations ./integrations
+COPY migrations ./migrations
 COPY scripts ./scripts
 
 RUN pip install --no-cache-dir .

@@ -64,6 +64,7 @@ def test_projection_job_deploys_a_repeatable_cloud_scheduler_trigger():
 
     dockerfile = read_repo_file("Dockerfile")
     assert "COPY scripts ./scripts" in dockerfile
+    assert "COPY migrations ./migrations" in dockerfile
 
 
 def test_projection_job_requires_separate_runtime_and_scheduler_identities(tmp_path):
