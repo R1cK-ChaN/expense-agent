@@ -72,6 +72,34 @@ write images, deploy Cloud Run revisions, and act as the runtime service
 account. Grant the GitHub Workload Identity principal access to impersonate the
 deploy service account.
 
+## Sheet Projection Schedule
+
+The `Deploy Sheet Projection Schedule` workflow is manual and scoped to the
+selected GitHub `staging` or `production` environment. It calls
+`scripts/deploy_sheet_projection_job.sh`, which idempotently deploys a Cloud Run
+Job running `sync_postgres_to_google_sheets.py` and creates or updates its Cloud
+Scheduler HTTP trigger. It is intentionally separate from the bot deployment so
+merging code does not enable production projection or production cutover.
+
+Configure these variables in each GitHub environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `SHEET_PROJECTION_JOB` | Stable Cloud Run Job name. |
+| `SHEET_PROJECTION_IMAGE_URI` | Already-built Expense Agent image containing `scripts/`. |
+| `CLOUD_RUN_SERVICE_ACCOUNT` | Existing bot runtime identity, used to reject credential reuse by the projection job. |
+| `SHEET_PROJECTION_RUNTIME_SERVICE_ACCOUNT` | Dedicated job identity with access only to projection secrets and required APIs. |
+| `SHEET_PROJECTION_SCHEDULER_SERVICE_ACCOUNT` | Separate identity permitted to invoke only the projection job. |
+| `SHEET_PROJECTION_SECRET_MAPPINGS` | Must map `DATABASE_URL` and `GOOGLE_SERVICE_ACCOUNT_JSON` from environment-specific Secret Manager secrets. |
+| `SHEET_PROJECTION_SCHEDULE` | Cron schedule; defaults to every five minutes. |
+| `SHEET_PROJECTION_SCHEDULE_TIMEZONE` | Scheduler timezone; defaults to `Etc/UTC`. |
+
+The deployment script rejects reusing either the scheduler identity or the
+production bot runtime identity for the projection job. IAM grants remain
+environment-owned prerequisites; the script does not
+broaden IAM. Re-running the workflow updates the named job and schedule rather
+than creating duplicates.
+
 ## Verification
 
 The deploy script reads the deployed service URL from Cloud Run and runs:

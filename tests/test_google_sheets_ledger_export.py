@@ -6,9 +6,16 @@ import pytest
 from core.sheet_export import LedgerTransaction
 from integrations.google_sheets.ledger_export import (
     GoogleSheetsLedgerExportRepository,
+    LEDGER_PROJECTION_SHEET_NAME,
     LedgerExportSheetSchemaError,
     ledger_export_header_row,
 )
+from integrations.google_sheets.schema import TRANSACTIONS_SHEET_NAME
+
+
+def test_projection_uses_a_distinct_worksheet_from_legacy_runtime_ledger():
+    assert LEDGER_PROJECTION_SHEET_NAME == "Ledger"
+    assert LEDGER_PROJECTION_SHEET_NAME != TRANSACTIONS_SHEET_NAME
 
 
 def test_upsert_transaction_appends_user_facing_ledger_fields_only():
@@ -23,7 +30,7 @@ def test_upsert_transaction_appends_user_facing_ledger_fields_only():
     assert sheets_client.append_calls == [
         (
             "sheet-user-1",
-            "Transactions!A:K",
+            "Ledger!A:K",
             [
                 [
                     "txn-1",
@@ -86,7 +93,7 @@ def test_upsert_transaction_updates_existing_row_by_transaction_id():
     assert sheets_client.update_calls == [
         (
             "sheet-user-1",
-            "Transactions!A2:K2",
+            "Ledger!A2:K2",
             [sheets_client.rows[1]],
         )
     ]

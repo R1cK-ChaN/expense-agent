@@ -38,9 +38,11 @@ runs without real external credentials.
 Set `STORAGE_BACKEND=postgres` with `DATABASE_URL` to make runtime reads and
 writes use PostgreSQL. Keep `STORAGE_BACKEND=google_sheets` with
 `GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_SHEET_ID` only for the pre-cutover or
-rollback runtime path. PostgreSQL-to-Sheets projection uses
-`scripts/sync_postgres_to_google_sheets.py`; Sheet edits are never imported as
-runtime commands. Google Sheets setup is documented in
+rollback runtime path. PostgreSQL-to-Sheets projection writes the separate
+`Ledger` worksheet through `scripts/sync_postgres_to_google_sheets.py`; Sheet
+edits are never imported as runtime commands. The Cloud Run Job and Cloud
+Scheduler deployment entrypoint is `scripts/deploy_sheet_projection_job.sh`.
+Google Sheets setup is documented in
 `docs/google-sheets-template.md`, and the backfill, verification, cutover, and
 rollback procedure is in `docs/postgres-backfill-cutover.md`.
 

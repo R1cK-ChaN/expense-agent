@@ -16,6 +16,9 @@ verification does not by itself authorize production exposure.
 - `DEFAULT_TIMEZONE` matches the source ledger, currently `Asia/Singapore`.
 - Google Sheets has the `Transactions` worksheet and current headers from
   `docs/google-sheets-template.md`.
+- The same spreadsheet has a separate `Ledger` worksheet with the 11-column
+  projection header. Do not replace or rename `Transactions`; it is required by
+  the temporary rollback repository.
 - No production bot configuration changes without explicit approval.
 
 Validate local migration files:
@@ -97,9 +100,13 @@ the backfill, and rerun verification. Keep runtime on its current backend.
 5. Query the containing date range and verify totals, rate dates, and category
    percentages.
 6. Configure `google_sheet_exports`, run
-   `scripts/sync_postgres_to_google_sheets.py`, and verify the projected row.
+   `scripts/sync_postgres_to_google_sheets.py`, and verify the projected row in
+   `Ledger` while `Transactions` remains unchanged.
 7. Simulate a Sheet failure, verify `last_error` and the unchanged cursor, then
    retry successfully.
+8. Run the `Deploy Sheet Projection Schedule` workflow for staging. Verify the
+   Cloud Scheduler trigger executes the Cloud Run Job on the configured cadence
+   and that repeated workflow runs update, rather than duplicate, both resources.
 
 ## Production Cutover
 
@@ -109,10 +116,19 @@ and staging validation above succeed. Set `STORAGE_BACKEND=postgres`, provide
 projection checks. A successful deploy or health check alone is not approval to
 expose PostgreSQL-backed behavior.
 
+After cutover approval, run the `Deploy Sheet Projection Schedule` workflow for
+the production GitHub environment. The projection job service account needs
+only Secret Manager access to its staging or production `DATABASE_URL` and
+Google credential secrets. The scheduler service account needs only permission
+to run that Cloud Run Job. Neither identity is the production bot runtime
+service account.
+
 ## Rollback
 
 Restore `STORAGE_BACKEND=google_sheets` with the legacy Sheet credentials and
-stop the projection job so there is only one Sheet writer. Before resuming
+pause the projection schedule so there is only one writer affecting the user
+view. The bot resumes against the unchanged 17-column `Transactions` worksheet;
+the 11-column `Ledger` projection remains separate. Before resuming
 normal traffic, identify PostgreSQL transactions committed during the cutover
 window and reconcile them into the Sheet without changing their stable IDs.
 Preserve PostgreSQL and its audit events for investigation; do not run a

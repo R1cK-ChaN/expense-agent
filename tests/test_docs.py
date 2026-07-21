@@ -40,3 +40,14 @@ def test_architecture_documents_database_to_sheets_export_projection():
     assert "database -> Google Sheets" in architecture
     assert "google_sheet_exports" in architecture
     assert "sync_postgres_to_google_sheets.py" in architecture
+    assert "`Ledger` worksheet" in architecture
+    assert "deploy-sheet-projection.yml" in architecture
+
+
+def test_sheet_template_keeps_rollback_and_projection_schemas_separate():
+    template = (ROOT / "docs" / "google-sheets-template.md").read_text()
+
+    assert "17-column" in template
+    assert "11-column" in template
+    assert "worksheet named `Ledger`" in template
+    assert "Leave `Transactions`" in template

@@ -6,9 +6,9 @@ from integrations.google_sheets.repository import (
     SheetsValuesClient,
     TransactionRepositoryError,
 )
-from integrations.google_sheets.schema import TRANSACTIONS_SHEET_NAME
 
 
+LEDGER_PROJECTION_SHEET_NAME = "Ledger"
 LEDGER_EXPORT_HEADERS = (
     "id",
     "date",
@@ -33,7 +33,8 @@ def _last_column_name(column_count: int) -> str:
 
 
 LEDGER_EXPORT_VALUE_RANGE = (
-    f"{TRANSACTIONS_SHEET_NAME}!A:{_last_column_name(len(LEDGER_EXPORT_HEADERS))}"
+    f"{LEDGER_PROJECTION_SHEET_NAME}!A:"
+    f"{_last_column_name(len(LEDGER_EXPORT_HEADERS))}"
 )
 
 
@@ -137,17 +138,19 @@ def _row_transaction_id(row: Sequence[str]) -> str | None:
 def _validate_export_headers(rows: Sequence[Sequence[str]]) -> None:
     if not rows:
         raise LedgerExportSheetSchemaError(
-            f"{TRANSACTIONS_SHEET_NAME} is missing the required export header row."
+            f"{LEDGER_PROJECTION_SHEET_NAME} is missing the required "
+            "projection header row."
         )
     if tuple(rows[0]) == LEDGER_EXPORT_HEADERS:
         return
     raise LedgerExportSheetSchemaError(
-        f"{TRANSACTIONS_SHEET_NAME} headers must match the ledger export schema."
+        f"{LEDGER_PROJECTION_SHEET_NAME} headers must match the ledger "
+        "projection schema."
     )
 
 
 def _ledger_row_range(row_number: int) -> str:
     return (
-        f"{TRANSACTIONS_SHEET_NAME}!A{row_number}:"
+        f"{LEDGER_PROJECTION_SHEET_NAME}!A{row_number}:"
         f"{_last_column_name(len(LEDGER_EXPORT_HEADERS))}{row_number}"
     )

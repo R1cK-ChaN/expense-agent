@@ -61,8 +61,9 @@ The backend is the only component allowed to decide whether data is valid, wheth
    after each user's `last_synced_event_id`.
 3. The runner maps the current database transaction state to user-facing ledger
    fields only.
-4. The Google Sheets export adapter upserts the `Transactions` row by stable
-   transaction ID, so repeated syncs or update events do not duplicate rows.
+4. The Google Sheets export adapter upserts the separate `Ledger` worksheet row
+   by stable transaction ID, so repeated syncs or update events do not duplicate
+   rows.
 5. On success, PostgreSQL advances `last_synced_event_id`, sets
    `last_synced_at`, and clears `last_error`.
 6. On Google Sheets failure, the already committed database transaction remains
@@ -320,9 +321,14 @@ orchestration lives in `core/sheet_export_service.py`. PostgreSQL export config
 and pending event reads live in
 `integrations/postgres/sheet_export_repository.py`. The Google Sheets projection
 adapter lives in `integrations/google_sheets/ledger_export.py` and writes a
-compact `Transactions` sheet with `id`, date, amount, currency, category,
+compact `Ledger` worksheet with `id`, date, amount, currency, category,
 merchant, payment method, note, and timestamps. Operators can run
-`scripts/sync_postgres_to_google_sheets.py` manually or from a scheduler.
+`scripts/sync_postgres_to_google_sheets.py` manually. The explicit
+`deploy-sheet-projection.yml` workflow deploys or updates a Cloud Run Job and a
+Cloud Scheduler trigger through `scripts/deploy_sheet_projection_job.sh`.
+Repeated scheduler deployment updates the same named resources. The projection
+runtime and scheduler invocation identities are separate from each other and
+from the bot runtime identity.
 
 ### Exchange-Rate Provider
 
@@ -404,8 +410,9 @@ Optional configuration:
 
 Secrets must come from environment variables or a secret manager. They must not be committed to the repository.
 
-The Google Sheet must contain a worksheet named `Transactions` with the required
-header row described in `docs/google-sheets-template.md`.
+The rollback Sheet must retain `Transactions` with its 17-column header. The
+projection uses a separate `Ledger` worksheet with its 11-column header; both
+contracts are described in `docs/google-sheets-template.md`.
 
 ## Delivery
 

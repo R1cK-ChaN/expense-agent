@@ -79,8 +79,8 @@ partially migrated sheet fails before appending or updating rows.
 ## PostgreSQL Ledger Projection Sheet
 
 The PostgreSQL export tool projects authoritative database rows into Google
-Sheets for user visibility, verification, or recovery workflows. The export sync writes to a
-worksheet named `Transactions`, but it uses a narrower user-facing header row:
+Sheets for user visibility and verification. It writes to a separate worksheet
+named `Ledger` with this narrower user-facing header row:
 
 ```text
 id,date,amount,currency,type,category,merchant,payment_method,note,created_at,updated_at
@@ -91,3 +91,17 @@ Rows are upserted by `id`, so repeated database -> Google Sheets syncs update
 the existing transaction row rather than appending duplicates. Source metadata,
 parser internals, raw provider payloads, and location context are intentionally
 not included in this projection by default.
+
+The projection must never reuse or rename the legacy `Transactions` worksheet.
+That worksheet retains its 17-column schema while the temporary rollback path
+exists, including source metadata required for duplicate detection. Before
+enabling projection for an existing spreadsheet:
+
+1. Back up or confirm recovery for the existing `Transactions` worksheet.
+2. Create a new worksheet named `Ledger`.
+3. Paste the 11-column projection header above into `Ledger` row 1.
+4. Leave `Transactions` and its 17-column header unchanged.
+5. Run one staging projection and verify that only `Ledger` changed.
+
+This separation makes projection schema changes non-destructive and keeps the
+legacy rollback repository readable until rollback compatibility is retired.
