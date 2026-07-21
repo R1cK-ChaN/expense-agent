@@ -2,7 +2,12 @@
 
 ## Product Goal
 
-Expense Agent is a Telegram-first expense logger. A user sends natural-language messages to a Telegram bot, the backend turns supported messages into structured expense records, stores them in Google Sheets, and replies with a clear confirmation or correction prompt.
+Expense Agent is an IM-first expense logger. A user sends natural-language
+messages to a supported bot, the backend turns supported messages into
+structured expense records, stores them in the authoritative ledger, and
+replies with a clear confirmation or correction prompt. PostgreSQL is the
+accepted ledger authority after explicit cutover; Google Sheets remains a
+temporary rollback backend and a replaceable user-visible projection.
 
 The MVP optimizes for reliable manual expense capture, correction, and lightweight spending lookup. It is not an autonomous finance agent.
 
@@ -33,7 +38,8 @@ As a user, I can receive a useful prompt when a message cannot safely become a t
 
 Expected behavior:
 
-- Missing amount, unsupported currency, invalid date, or unclear intent does not write to Google Sheets.
+- Missing amount, unsupported currency, invalid date, or unclear intent does
+  not mutate the authoritative ledger.
 - Ambiguous parse results produce a clarification reply that names the field needing correction.
 - Unsupported requests receive a concise explanation of what the MVP supports.
 
@@ -70,9 +76,10 @@ Examples:
 
 Expected behavior:
 
-- Queries read from Google Sheets without writing new transaction rows.
+- Queries read from the selected authoritative repository without writing new
+  transaction rows; after cutover that repository is PostgreSQL.
 - Querying, aggregation, exchange-rate conversion, and reply formatting must not
-  append or update any Google Sheets row or cell.
+  append or update a transaction, audit event, or Google Sheets projection row.
 - A new row may be appended only after a create-expense request passes parsing,
   validation, and duplicate checks.
 - The implemented query supports an inclusive date range and returns a total
@@ -206,7 +213,8 @@ Future issues should map each acceptance case to a red test or explicit manual c
 - Category-filtered spending queries and recent-expense list queries.
 - Parser contract: supported intents, required fields, confidence, and category normalization.
 - Domain validation: transaction invariants, update invariants, query invariants, and idempotency.
-- Google Sheets repository: append, update, lookup, and query behavior against a fake or test sheet.
+- Repository contracts: PostgreSQL authority plus temporary Google Sheets
+  rollback compatibility against fakes or approved test infrastructure.
 - Telegram adapter: update decoding, message metadata capture, reply formatting, and duplicate delivery behavior.
 - Application service orchestration: command routing, validation before storage, storage before confirmation, and error replies.
 - Configuration and deployment baseline: timezone, currency, credentials, and environment validation.

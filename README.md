@@ -10,6 +10,10 @@ replaceable user-visible projection during cutover.
 
 Development follows the GitHub issues in this repository and uses TDD for implementation slices.
 
+The project handbook starts at [`docs/index.md`](docs/index.md). It identifies
+which document owns requirements, interfaces, architecture, decisions, current
+work, and operational procedures.
+
 ## Local Development
 
 Create a virtual environment and install the project with test dependencies:
