@@ -76,10 +76,11 @@ partially migrated sheet fails before appending or updating rows.
 
 `validate_transaction_headers` checks a loaded header row against the required contract and reports missing, reordered, and unexpected headers. Duplicate header occurrences are reported as unexpected. A valid sheet header must exactly match the contract above.
 
-## Database Export Transactions Sheet
+## Offline Database Export Transactions Sheet
 
-When PostgreSQL is the source of truth, Google Sheets can be used as a
-read-oriented user ledger projection. The export sync still writes to a
+The retained offline PostgreSQL export tool can project imported database rows
+into Google Sheets for verification or recovery workflows. Running this tool
+does not make PostgreSQL the bot's source of truth. The export sync writes to a
 worksheet named `Transactions`, but it uses a narrower user-facing header row:
 
 ```text

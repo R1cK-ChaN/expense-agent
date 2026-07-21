@@ -65,8 +65,8 @@ As a user, I can ask simple questions about previously recorded spending.
 Examples:
 
 - `how much did I spend today?`
-- `这个月餐饮花了多少？`
-- `show last 5 expenses`
+- `这个月花了多少？`
+- `5月10日到20日花了多少？`
 
 Expected behavior:
 
@@ -75,8 +75,11 @@ Expected behavior:
   append or update any Google Sheets row or cell.
 - A new row may be appended only after a create-expense request passes parsing,
   validation, and duplicate checks.
-- Supported filters are date range, category, and recent transaction count.
-- The bot replies with totals or a compact list, depending on the query.
+- The implemented query supports an inclusive date range and returns a total
+  with category breakdowns; category-filtered and recent-expense list queries
+  remain future work.
+- Legacy current-month parser responses end on the requesting message's local
+  date rather than including future-dated rows.
 
 ## MVP Defaults
 
@@ -118,7 +121,7 @@ Expense confirmations preserve the original foreign-currency amount and show
 its SGD equivalent using the transaction-date reference rate. Spending queries
 accept an inclusive date range, convert every foreign-currency row to SGD using
 its transaction-date rate, and report the SGD total, original foreign-currency
-subtotals, and SGD category totals with percentages.
+subtotals, actual rate dates used, and SGD category totals with percentages.
 
 ## Supported Categories
 
@@ -189,14 +192,18 @@ Parser output must normalize synonyms into these values. For example, `mrt`,
 ### Queries
 
 - Given a supported total-spend query, when matching transactions exist, then the bot replies with the SGD total, original foreign-currency subtotals, and category amounts and percentages in SGD.
-- Given a supported category query, when matching transactions exist, then the bot replies using normalized category names.
-- Given a recent-expenses query, when transactions exist, then the bot replies with a compact list ordered newest first.
+- Given a foreign-currency conversion uses a previous available rate, when the
+  bot replies, then the actual rate date is visible.
+- Given a legacy current-month parser response, when the bot reads matching
+  transactions, then the inclusive end date is the requesting message's local
+  date.
 - Given a query has no matching transactions, when the bot handles it, then the bot replies with an empty-result message and does not write to storage.
 
 ## Future MVP Issue Breakdown
 
 Future issues should map each acceptance case to a red test or explicit manual check before implementation:
 
+- Category-filtered spending queries and recent-expense list queries.
 - Parser contract: supported intents, required fields, confidence, and category normalization.
 - Domain validation: transaction invariants, update invariants, query invariants, and idempotency.
 - Google Sheets repository: append, update, lookup, and query behavior against a fake or test sheet.

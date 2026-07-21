@@ -3,9 +3,10 @@
 Telegram Expense Agent MVP.
 
 Users send natural-language expense messages to a Telegram bot. The backend
-parses, validates, stores transactions in the configured repository, and replies
-with a confirmation. Google Sheets remains the default storage backend;
-PostgreSQL can be selected with runtime configuration.
+parses, validates, stores transactions in the canonical Google Sheets ledger,
+and replies with a confirmation. PostgreSQL is not selectable for bot runtime
+traffic; its integration remains available only to offline migration,
+verification, and export tooling.
 
 Development follows the GitHub issues in this repository and uses TDD for implementation slices.
 
@@ -39,8 +40,9 @@ The bot uses Google Sheets as its canonical ledger. Configure
 `Transactions` worksheet without writing to it, while new expenses append one
 row. PostgreSQL remains available only to migration, verification, and export
 tooling. Google Sheets setup is documented in `docs/google-sheets-template.md`.
-The Google Sheets to PostgreSQL backfill, verification, production cutover, and
-rollback runbook is documented in `docs/postgres-backfill-cutover.md`.
+The offline Google Sheets to PostgreSQL backfill and verification tooling is
+documented in `docs/postgres-backfill-cutover.md`; its former production
+cutover procedure is retained only as historical context.
 
 ## Deployment
 
